@@ -36,9 +36,10 @@ impl Rule {
             Rule::samedent => "matching indentation",
             Rule::line => "expression",
             Rule::num => "number",
-            Rule::var => "identifier",
+            Rule::var | Rule::sym => "identifier",
             Rule::EOI => "end of input",
             Rule::close_paren => "')'",
+            Rule::def => "'='",
             _ => "other",
         }
     }
@@ -77,6 +78,7 @@ pub fn pest_to_ast(
             let val = match op.as_rule() {
                 Rule::tuple => Term::Tuple(Box::new(lhs), Box::new(rhs)),
                 Rule::union => Term::Union(Box::new(lhs), Box::new(rhs)),
+                Rule::def => Term::Def(Box::new(lhs), Box::new(rhs)),
                 Rule::dot => {
                     if let Term::Var(s) = rhs.val {
                         Term::Dot(Box::new(lhs), s)
@@ -90,7 +92,7 @@ pub fn pest_to_ast(
                     }
                 }
                 Rule::app => Term::App(Box::new(lhs), Box::new(rhs)),
-                Rule::var => {
+                Rule::var | Rule::sym => {
                     let sym = intern.borrow_mut().get_or_intern(op.as_str().trim());
                     let span = lhs.span.merge(pest_span(op.as_span()));
                     Term::App(
@@ -108,13 +110,24 @@ pub fn pest_to_ast(
         };
         let span = pest_span(p.as_span());
         let val = match p.as_rule() {
-            Rule::num => Term::Int(p.as_str().trim().parse().unwrap()),
-            Rule::var => Term::Var(intern.borrow_mut().get_or_intern(p.as_str())),
+            Rule::num => {
+                let s = p.as_str().trim();
+                if let Ok(i) = s.parse::<i32>() {
+                    Term::Int(i)
+                } else if let Ok(f) = s.parse::<f32>() {
+                    Term::Float(f)
+                } else {
+                    panic!("We can't parse something that match the 'num' rule!")
+                }
+            },
+            Rule::var | Rule::sym => Term::Var(intern.borrow_mut().get_or_intern(p.as_str())),
             Rule::line => {
                 use pest::prec_climber::*;
                 let ops = vec![
+                    Operator::new(Rule::def, Assoc::Left),
                     Operator::new(Rule::union, Assoc::Right),
                     Operator::new(Rule::var, Assoc::Left),
+                    Operator::new(Rule::sym, Assoc::Left),
                     Operator::new(Rule::app, Assoc::Left),
                     Operator::new(Rule::tuple, Assoc::Right),
                     Operator::new(Rule::dot, Assoc::Left),
@@ -141,7 +154,6 @@ pub fn pest_to_ast(
     }
     Ok(v)
 }
-
 
 // macro_rules! start_end {
 //     ($s:ident, $e:ident, $v:ident, $pair:ident) => {{
