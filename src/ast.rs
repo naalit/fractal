@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use string_interner::Sym;
 
 /// An AST node, with error reporting information attached
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Node {
     pub file: codespan::FileId,
     pub span: codespan::Span,
@@ -91,7 +91,7 @@ impl Typeable for Node {
 }
 
 /// The actual thing that's inside a `Node`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Term {
     Var(Sym),
     Int(i32),
@@ -106,7 +106,7 @@ pub enum Term {
 }
 
 /// Represents a match arm in a `fun`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Fun {
     pub lhs: Node,
     pub rhs: Node,

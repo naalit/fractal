@@ -13,9 +13,21 @@ app = { "" }
 close_paren = { ")" }
 paren = _{ "(" ~ line ~ close_paren }
 
+// a b c
+//  d e
+//  g
+//   h i j
+
+// atom ~ (op ~ atom)*
+//  ~ indent ~ op ~ line ~ (samedent ~ op ~ line)* ~ dedent
+
+// atom ~ op ~ atom ~ indent ~ op ~ atom ~ samedent ~ op ~ (indent ~ atom ~ op ~ atom ~ dedent) ~ dedent
+
+expr = _{ atom | indent ~ line ~ dedent }
+
 node_a = _{ atom ~ (op ~ atom)* ~ op ~ indent ~ line ~ dedent }
 node_b = _{ atom ~ (op ~ atom)* ~ app ~ indent ~ line ~ dedent }
-node_c = _{ (node_a | node_d) ~ indent ~ op ~ atom ~ (samedent ~ op ~ atom)* ~ dedent }
+node_c = _{ (node_a | node_d) ~ indent ~ op ~ expr ~ (samedent ~ op ~ expr)* ~ dedent }
 node_d = _{ atom ~ (op ~ atom | app ~ atom)* }
 line = { node_a | node_c | node_b | node_d }
 

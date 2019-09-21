@@ -117,9 +117,9 @@ pub fn pest_to_ast(
                 } else if let Ok(f) = s.parse::<f32>() {
                     Term::Float(f)
                 } else {
-                    panic!("We can't parse something that match the 'num' rule!")
+                    panic!("We can't parse something that matched the 'num' rule!")
                 }
-            },
+            }
             Rule::var | Rule::sym => Term::Var(intern.borrow_mut().get_or_intern(p.as_str())),
             Rule::line => {
                 use pest::prec_climber::*;
@@ -155,56 +155,101 @@ pub fn pest_to_ast(
     Ok(v)
 }
 
-// macro_rules! start_end {
-//     ($s:ident, $e:ident, $v:ident, $pair:ident) => {{
-//         $v.$s();
-//         visit_pest($pair.into_inner(), $v);
-//         $v.$e();
-//     }};
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// pub fn visit_pest(tree: Pairs<Rule>, visitor: &mut impl Visitor) {
-//     let mut intern = StringInterner::new();
-//     for pair in tree {
-//         match pair.as_rule() {
-//             Rule::ident => visitor.visit_var(intern.get_or_intern(pair.as_str().trim())),
-//             Rule::number => match pair.as_str().trim().parse::<i32>() {
-//                 Ok(i) => visitor.visit_int(i),
-//                 Err(_) => visitor.visit_float(pair.as_str().trim().parse().unwrap()),
-//             }
-//             Rule::tuple => {
-//                 visitor.start_tuple();
-//                 visit_pest(pair.into_inner(), visitor);
-//                 visitor.end_tuple();
-//             }
-//             Rule::union => start_end!(start_union, end_union, visitor, pair),
-//             Rule::block => start_end!(start_block, end_block, visitor, pair),
-//             Rule::app | Rule::app_b => start_end!(start_app, end_app, visitor, pair),
-//             Rule::fun => {
-//                 visitor.start_fun();
-//                 let mut first = true;
-//                 for pair in pair.into_inner() {
-//                     if let Rule::arm = pair.as_rule() {
-//                         if !first {
-//                             visitor.next_arm();
-//                         }
-//                         visit_pest(pair.into_inner(), visitor);
-//                         first = false;
-//                     }
-//                 }
-//                 visitor.end_fun();
-//             }
-//             Rule::def => {
-//                 visitor.def_lhs();
-//                 let mut p = pair.into_inner();
-//                 visit_pest(Pairs::single(p.next().unwrap()), visitor);
-//                 visitor.def_rhs();
-//                 visit_pest(Pairs::single(p.next().unwrap()), visitor);
-//                 visitor.end_def();
-//             }
-//             Rule::statement => visit_pest(pair.into_inner(), visitor),
-//             Rule::EOI => (),
-//             _ => panic!("Found unexpected rule {:?} in parse tree", pair.as_rule()),
-//         }
-//     }
-// }
+    fn clean_parse(s: &str) -> Result<Vec<Node>> {
+        let intern = RefCell::new(StringInterner::new());
+        let mut context = ErrorContext::new();
+        let p = parse_str(&intern, &mut context, "test", s);
+        match &p {
+            Ok(_) => (),
+            Err(e) => context.write_error(e.clone()).unwrap(),
+        };
+        p
+    }
+
+    macro_rules! assert_matches {
+        (@ok $p:ident => $q:pat) => {
+            match &$p.val {
+                $q => (),
+                x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
+            }
+        };
+        (@ok $p:ident => $q:pat, $($p1:ident => $q1:pat),*) => {
+            match &$p.val {
+                $q => assert_matches!(@ok $($p1 => $q1),*),
+                x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
+            }
+        };
+        ($start:expr => { $p:ident => $q:pat, $($x:tt)* }) => {
+            match $start {
+                Ok(p) => {
+                    let $p = &p[0];
+                    match &$p.val {
+                        $q => assert_matches!(@ok $($x)*),
+                        x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
+                    }
+                },
+                _ => panic!("Parse failed"),
+            }
+        };
+    }
+
+    #[test]
+    fn test_def_prec() {
+        assert_matches! {
+            clean_parse("a = 2 + 4") => {
+                x => Term::Def(a,x),
+                x => Term::App(x,four),
+                x => Term::Dot(two,_),
+                four => Term::Int(4),
+                two => Term::Int(2),
+                a => Term::Var(_)
+            }
+        }
+    }
+
+    #[test]
+    fn test_indent() {
+        assert_matches! {
+            // a.b(c)
+            //  .d(e)
+            //  .g(h.i(j))
+            clean_parse(r#"a b c
+                d e
+                g
+                    h i j"#) => {
+                x => Term::App(x,hij),
+
+                x => Term::Dot(x,_),
+                x => Term::App(abcd,e),
+                abcd => Term::Dot(abc,_),
+                abc => Term::App(ab,c),
+                ab => Term::Dot(a,_),
+                a => Term::Var(_),
+                c => Term::Var(_),
+                e => Term::Var(_),
+
+                hij => Term::App(hi,j),
+                hi => Term::Dot(h,_),
+                h => Term::Var(_),
+                j => Term::Var(_)
+            }
+        }
+    }
+
+    #[test]
+    fn test_app_tuple() {
+        assert_matches! {
+            clean_parse("f x, y") => {
+                p => Term::App(f, t),
+                f => Term::Var(_),
+                t => Term::Tuple(x, y),
+                x => Term::Var(_),
+                y => Term::Var(_)
+            }
+        };
+    }
+}

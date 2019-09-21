@@ -5,6 +5,7 @@ use codespan_reporting::term::{emit, Config};
 use pest::error::InputLocation;
 use std::cell::RefCell;
 
+#[derive(Debug, Clone)]
 pub struct Error(Diagnostic);
 impl Error {
     pub fn new(
