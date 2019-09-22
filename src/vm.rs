@@ -1,8 +1,13 @@
+//! This module is going to be rewritten entirely later, because right now it's a really slow tree-walking interpreter
+//! So, there aren't any tests, and it's not well written
+
 use crate::ast::*;
+use crate::pattern::*;
 use codespan::{FileId, Span};
+use std::rc::Rc;
 use string_interner::Sym;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Builtin {
     Print,
     Add,
@@ -11,8 +16,9 @@ pub enum Builtin {
     Div,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Fun(Rc<Vec<Fun>>),
     Int(i32),
     Float(f32),
     Partial(Box<Value>, Box<Value>),
@@ -42,6 +48,7 @@ impl Typeable for Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::Fun(_) => write!(f, "<function>"),
             Value::Int(i) => write!(f, "{}", i),
             Value::Float(i) => write!(f, "{}", i),
             Value::Tuple(a, b) => write!(f, "({}, {})", a, b),
@@ -73,6 +80,7 @@ pub enum ErrorType {
     NotFound(Sym),
     MemberNotFound(Type, Sym),
     UnImplemented,
+    MatchError,
 }
 
 impl EvalContext {
@@ -136,6 +144,32 @@ impl EvalContext {
                 Ok(Value::Tuple(Box::new(a), Box::new(b)))
             }
             Term::App(a, b) => match self.eval(*a)? {
+                Value::Fun(arms) => {
+                    let b = self.eval(*b)?;
+                    let arm = arms
+                        .iter()
+                        .map(|x| (&x.rhs, x.lhs.match_strict(&b)))
+                        .find(|(b, x)| x.is_pass());
+                    match arm {
+                        Some((body, MatchResult::Pass(sub))) => {
+                            let mut old = Vec::new();
+                            for (k, v) in sub {
+                                if let Some(v) = self.env.env.insert(k.clone(), v) {
+                                    old.push((k, v));
+                                }
+                            }
+
+                            let r = self.eval(body.clone());
+
+                            for (k, v) in old {
+                                self.env.env.insert(k.clone(), v);
+                            }
+
+                            r
+                        }
+                        _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
+                    }
+                }
                 Value::Builtin(Builtin::Print) => {
                     println!("{}", self.eval(*b)?);
                     Ok(Value::Nil)
@@ -143,6 +177,7 @@ impl EvalContext {
                 Value::Partial(f, a) => self.builtin_partial(span, file, *f, *a, *b),
                 _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
             },
+            Term::Fun(f) => Ok(Value::Fun(Rc::new(f))),
             _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
         }
     }

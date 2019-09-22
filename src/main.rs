@@ -1,6 +1,7 @@
 mod ast;
 mod error;
 mod parse;
+mod pattern;
 mod vm;
 use error::ErrorContext;
 use std::io::Write;
@@ -32,6 +33,7 @@ fn main() {
                     Ok(x) => println!("{}", x),
                     Err(e) => {
                         let message = match e.val {
+                            ErrorType::MatchError => format!("Match failed"),
                             ErrorType::NotFound(s) => {
                                 format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
                             }
