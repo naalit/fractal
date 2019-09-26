@@ -41,13 +41,13 @@ pub struct Env<T> {
     pub modules: HashMap<Type, HashMap<Sym, T>>,
 }
 impl<T: Typeable> Env<T> {
-    pub fn get_ty(&self, s: &Sym) -> Option<Type> {
-        self.env.get(s).map(|x| x.ty(self))
+    pub fn get_ty(&self, s: Sym) -> Option<Type> {
+        self.env.get(&s).map(|x| x.ty(self))
     }
 }
 impl<T> Env<T> {
-    pub fn get(&self, s: &Sym) -> Option<&T> {
-        self.env.get(s)
+    pub fn get(&self, s: Sym) -> Option<&T> {
+        self.env.get(&s)
     }
     pub fn insert(&mut self, s: Sym, v: T) {
         self.env.insert(s, v);
@@ -55,7 +55,7 @@ impl<T> Env<T> {
 }
 
 /// A nominal type, which is mostly for use as a namespace
-#[derive(PartialEq, Hash, Eq, Debug)]
+#[derive(PartialEq, Hash, Eq, Debug, Clone)]
 pub enum Type {
     /// A built-in number type
     Num,
@@ -73,7 +73,7 @@ pub trait Typeable {
 impl Typeable for Term {
     fn ty(&self, env: &Env<impl Typeable>) -> Type {
         match self {
-            Term::Var(s) => env.get_ty(s).unwrap_or(Type::None),
+            Term::Var(s) => env.get_ty(*s).unwrap_or(Type::None),
             Term::Dot(x, s) => env
                 .modules
                 .get(&x.ty(env))
@@ -86,6 +86,7 @@ impl Typeable for Term {
                 Type::Fun(x) => *x,
                 y => y,
             },
+            Term::Fun(x) => type_fun(&x, env),
             _ => Type::None,
         }
     }
@@ -94,6 +95,17 @@ impl Typeable for Node {
     fn ty(&self, env: &Env<impl Typeable>) -> Type {
         self.val.ty(env)
     }
+}
+
+pub fn type_fun(x: &[Fun], env: &Env<impl Typeable>) -> Type {
+    let mut tys = x.iter().map(|x| x.rhs.ty(env));
+    let t = tys.next().unwrap().clone();
+    for i in tys {
+        if i != t {
+            return Type::Fun(Box::new(Type::None));
+        }
+    }
+    Type::Fun(Box::new(t))
 }
 
 /// The actual thing that's inside a `Node`

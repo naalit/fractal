@@ -25,6 +25,7 @@ fn filter_silent(x: &Pair<Rule>) -> bool {
 }
 
 impl Rule {
+    /// We want to show nice error messages
     pub fn format(self) -> &'static str {
         match self {
             Rule::dot => "'.'",
@@ -40,6 +41,9 @@ impl Rule {
             Rule::EOI => "end of input",
             Rule::close_paren => "')'",
             Rule::def => "'='",
+            Rule::keyword => "keyword",
+            Rule::fun => "function",
+            Rule::fun_pat | Rule::fun_arm => "pattern",
             _ => "other",
         }
     }
@@ -262,6 +266,22 @@ mod tests {
                 four => Term::Int(4),
                 two => Term::Int(2),
                 a => Term::Var(_)
+            }
+        }
+    }
+
+    #[test]
+    fn test_app_infix() {
+        assert_matches! {
+            clean_parse("f 2 + f 3") => {
+                x => Term::App(f2p, f3),
+                f3 => Term::App(f, three),
+                f => Term::Var(_),
+                three => Term::Int(3),
+                f2p => Term::Dot(f2, _),
+                f2 => Term::App(f, two),
+                f => Term::Var(_),
+                two => Term::Int(2)
             }
         }
     }

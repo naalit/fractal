@@ -10,6 +10,7 @@ use string_interner::Sym;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Builtin {
     Print,
+    Sqr,
     Add,
     Sub,
     Mul,
@@ -35,12 +36,14 @@ impl Typeable for Value {
                 Builtin::Add | Builtin::Div | Builtin::Mul | Builtin::Sub => {
                     Type::Fun(Box::new(Type::Num))
                 }
+                Builtin::Sqr => Type::Fun(Box::new(Type::Num)),
                 Builtin::Print => Type::Fun(Box::new(Type::None)),
             },
             Value::Partial(a, _) => match a.ty(env) {
                 Type::Fun(x) => *x,
                 x => x,
             },
+            Value::Fun(x) => type_fun(&x, env),
             _ => Type::None,
         }
     }
@@ -85,22 +88,20 @@ pub enum ErrorType {
 
 impl EvalContext {
     pub fn new(intern: &crate::parse::Intern) -> Self {
-        let env = vec![(
-            intern.borrow_mut().get_or_intern("print"),
-            Value::Builtin(Builtin::Print),
-        )]
-        .into_iter()
-        .collect();
+        let env = vec![("print", Builtin::Print), ("sqr", Builtin::Sqr)]
+            .into_iter()
+            .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), Value::Builtin(b)))
+            .collect();
         let modules = vec![(
             Type::Num,
             vec![
-                ("+", Value::Builtin(Builtin::Add)),
-                ("-", Value::Builtin(Builtin::Sub)),
-                ("*", Value::Builtin(Builtin::Mul)),
-                ("/", Value::Builtin(Builtin::Div)),
+                ("+", Builtin::Add),
+                ("-", Builtin::Sub),
+                ("*", Builtin::Mul),
+                ("/", Builtin::Div),
             ]
             .into_iter()
-            .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), b))
+            .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), Value::Builtin(b)))
             .collect(),
         )]
         .into_iter()
@@ -124,7 +125,7 @@ impl EvalContext {
                     None => Err(EvalError::new(span, file, ErrorType::MemberNotFound(ty, s))),
                 }
             }
-            Term::Var(s) => match self.env.get(&s) {
+            Term::Var(s) => match self.env.get(s) {
                 Some(v) => Ok(v.clone()),
                 None => Err(EvalError::new(span, file, ErrorType::NotFound(s))),
             },
@@ -174,6 +175,11 @@ impl EvalContext {
                     println!("{}", self.eval(*b)?);
                     Ok(Value::Nil)
                 }
+                Value::Builtin(Builtin::Sqr) => match self.eval(*b)? {
+                    Value::Int(i) => Ok(Value::Int(i * i)),
+                    Value::Float(f) => Ok(Value::Float(f * f)),
+                    _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
+                },
                 Value::Partial(f, a) => self.builtin_partial(span, file, *f, *a, *b),
                 _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
             },

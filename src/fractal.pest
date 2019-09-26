@@ -1,5 +1,6 @@
+keyword = @{ "fun" | "do" }
 num = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
-var = @{ (ASCII_ALPHANUMERIC | "_")+ }
+var = @{ !num ~ !keyword ~ (ASCII_ALPHANUMERIC | "_")+ }
 sym = @{ (!(ASCII_ALPHANUMERIC | WHITESPACE | "(" | ")" | "\n" | "_"  | "." | "|" | "," | "=" | ":" | "$") ~ ANY)+ }
 atom = _{ num | sym | var | paren }
 
@@ -27,7 +28,7 @@ fun_pat = { node_d }
 fun_arm = { fun_pat ~ "=>" ~ line }
 fun = { "fun" ~ (fun_arm | indent ~ fun_arm ~ (samedent ~ fun_arm)* ~ dedent) }
 
-prog = _{ SOI ~ line ~ "\n"* ~ EOI }
+prog = _{ SOI ~ "\n"* ~ (line ~ "\n"*)+ ~ EOI }
 
 indent = @{ "\n"+ ~ PEEK[..] ~ PUSH(WHITESPACE+) }
 dedent = @{ EOI | "\n"+ ~ !PEEK[..] ~ DROP }

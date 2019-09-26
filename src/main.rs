@@ -19,39 +19,55 @@ fn main() {
             std::io::stdout().flush().unwrap();
         }
         let mut s = String::new();
-        std::io::stdin().read_line(&mut s).unwrap();
-        if !s.trim().is_empty() {
-            buf.push_str(&s);
-        } else if !buf.is_empty() {
-            let result =
-                parse::parse_str(&intern, &mut context, format!("<interactive:{}>", i), buf);
-            buf = String::new();
-            i += 1;
-            match result {
-                Ok(result) => match e.eval(result.into_iter().next().unwrap()) {
-                    Ok(Value::Nil) => (),
-                    Ok(x) => println!("{}", x),
-                    Err(e) => {
-                        let message = match e.val {
-                            ErrorType::MatchError => format!("Match failed"),
-                            ErrorType::NotFound(s) => {
-                                format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
-                            }
-                            ErrorType::MemberNotFound(ty, s) => format!(
-                                "Not found: member '{}' of {:?}",
-                                intern.borrow().resolve(s).unwrap(),
-                                ty
-                            ),
-                            ErrorType::UnImplemented => format!("Feature not implemented"),
-                        };
-                        let error = error::Error::new(e.file, message, e.span, "");
-                        context.write_error(error).unwrap()
-                    }
-                },
-                Err(e) => context.write_error(e).unwrap(),
-            }
-        } else {
+        if std::io::stdin().read_line(&mut s).unwrap() == 0 || s.trim() == "exit" {
+            println!("Goodbye!");
             break;
         }
+
+        // If we can parse this line, do that;
+        // If not, assume it's multiple lines and stop when they give us a blank line
+        let result = if buf.is_empty() {
+            match parse::parse_str(&intern, &mut context, format!("<interactive:{}>", i), &s) {
+                r @ Ok(_) => r,
+                Err(_) => {
+                    buf.push_str(&s);
+                    continue;
+                }
+            }
+        } else if s.trim().is_empty() {
+            parse::parse_str(&intern, &mut context, format!("<interactive:{}>", i), buf)
+        } else {
+            buf.push_str(&s);
+            continue;
+        };
+
+        buf = String::new();
+        i += 1;
+        match result {
+            Ok(result) => match e.eval(result.into_iter().next().unwrap()) {
+                Ok(Value::Nil) => (),
+                Ok(x) => println!("{}", x),
+                Err(e) => {
+                    let message = match e.val {
+                        ErrorType::MatchError => format!("Match failed"),
+                        ErrorType::NotFound(s) => {
+                            format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
+                        }
+                        ErrorType::MemberNotFound(ty, s) => format!(
+                            "Not found: member '{}' of {:?}",
+                            intern.borrow().resolve(s).unwrap(),
+                            ty
+                        ),
+                        ErrorType::UnImplemented => format!("Feature not implemented"),
+                    };
+                    let error = error::Error::new(e.file, message, e.span, "");
+                    context.write_error(error).unwrap()
+                }
+            },
+            Err(e) => context.write_error(e).unwrap(),
+        }
+        // } else {
+        //     break;
+        // }
     }
 }

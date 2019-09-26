@@ -57,12 +57,25 @@ pub trait Match {
     }
 }
 
+// https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/
+// We want pattern matching on floats to work as expected, which means work modulo rounding errors
+// Might be too slow to occur in generated code, especially because this might be to e.g. not divide by zero, where == works fine
+fn roughly_equal_f32(a: f32, b: f32) -> bool {
+    let diff = (a - b).abs();
+    let largest_abs = a.abs().max(b.abs());
+    // Check for absolute epsilon (needed for denormals & zero) and then relative epsilon
+    // We could use ULPs, but that's more annoying and could be slower on some architectures
+    diff <= std::f32::EPSILON || diff <= largest_abs * std::f32::EPSILON
+}
+
 impl Match for Term {
     fn match_strict(&self, other: &Value) -> MatchResult {
         match (self, other) {
             (Term::Var(s), x) => MatchResult::Pass(vec![(*s, x.clone())]),
             (Term::Int(x), Value::Int(y)) if x == y => MatchResult::Pass(Vec::new()),
-            (Term::Float(x), Value::Float(y)) if x == y => MatchResult::Pass(Vec::new()),
+            (Term::Float(x), Value::Float(y)) if roughly_equal_f32(*x, *y) => {
+                MatchResult::Pass(Vec::new())
+            }
             (Term::Tuple(a, b), Value::Tuple(a2, b2)) => {
                 if let MatchResult::Pass(mut a) = a.match_strict(a2) {
                     if let MatchResult::Pass(mut b) = b.match_strict(b2) {
@@ -95,7 +108,7 @@ impl Match for Term {
                 }
             }
             (Term::Float(x), Term::Float(y)) => {
-                if x == y {
+                if roughly_equal_f32(*x, *y) {
                     True
                 } else {
                     False
