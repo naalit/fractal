@@ -9,6 +9,8 @@ pub struct Node {
     pub val: Term,
 }
 impl Node {
+    /// Like a Display impl, but we need access to the interner.
+    /// This is mostly for feedback of the parser
     pub fn format(&self, intern: &crate::parse::Intern) -> String {
         match &self.val {
             Term::Var(s) => intern.borrow().resolve(*s).unwrap().to_string(),
@@ -22,7 +24,15 @@ impl Node {
                 intern.borrow().resolve(*s).unwrap()
             )
             .to_string(),
-            Term::Block(v) => format!("do {:#?}", v),
+            Term::Block(v) => {
+                let mut s = String::from("do");
+                for i in v {
+                    // TODO make indentation work in nested blocks
+                    s.push_str("\n  ");
+                    s.push_str(&i.format(intern));
+                }
+                s
+            }
             Term::App(a, b) => format!("{}({})", a.format(intern), b.format(intern)).to_string(),
             Term::Fun(v) => format!("do {:#?}", v),
             Term::Def(a, b) => format!("{} = {}", a.format(intern), b.format(intern)).to_string(),

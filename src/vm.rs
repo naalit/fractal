@@ -150,7 +150,7 @@ impl EvalContext {
                     let arm = arms
                         .iter()
                         .map(|x| (&x.rhs, x.lhs.match_strict(&b)))
-                        .find(|(b, x)| x.is_pass());
+                        .find(|(_, m)| m.is_pass());
                     match arm {
                         Some((body, MatchResult::Pass(sub))) => {
                             let mut old = Vec::new();

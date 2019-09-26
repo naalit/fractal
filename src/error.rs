@@ -31,7 +31,7 @@ impl Error {
                 let mut expected = String::new();
                 let mut unexpected = String::new();
                 let p_len = positives.len();
-                for (n, i) in positives.into_iter().enumerate() {
+                for (n, i) in positives.iter().enumerate() {
                     if !expected.is_empty() {
                         expected.push_str(", ");
                         if n == p_len - 1 {
@@ -41,7 +41,7 @@ impl Error {
                     expected.push_str(i.format());
                 }
                 let n_len = negatives.len();
-                for (n, i) in negatives.into_iter().enumerate() {
+                for (n, i) in negatives.iter().enumerate() {
                     if !unexpected.is_empty() {
                         unexpected.push_str(", ");
                         if n == n_len - 1 {

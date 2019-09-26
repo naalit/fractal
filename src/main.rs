@@ -13,6 +13,11 @@ fn main() {
     let mut e = EvalContext::new(&intern);
     let mut i = 0;
     let mut buf = String::new();
+
+    let args: Vec<String> = std::env::args().collect();
+    let verbose = args.iter().any(|x| x.trim() == "-v" || x.trim() == "--verbose");
+
+    // TODO switch to rustyline
     loop {
         if buf.is_empty() {
             print!(">> ");
@@ -44,30 +49,34 @@ fn main() {
         buf = String::new();
         i += 1;
         match result {
-            Ok(result) => match e.eval(result.into_iter().next().unwrap()) {
-                Ok(Value::Nil) => (),
-                Ok(x) => println!("{}", x),
-                Err(e) => {
-                    let message = match e.val {
-                        ErrorType::MatchError => format!("Match failed"),
-                        ErrorType::NotFound(s) => {
-                            format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
+            Ok(result) => {
+                for i in result {
+                    if verbose {
+                        println!("{}", i.format(&intern));
+                    }
+                    match e.eval(i) {
+                        Ok(Value::Nil) => (),
+                        Ok(x) => println!("{}", x),
+                        Err(e) => {
+                            let message = match e.val {
+                                ErrorType::MatchError => "Match failed".to_string(),
+                                ErrorType::NotFound(s) => {
+                                    format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
+                                }
+                                ErrorType::MemberNotFound(ty, s) => format!(
+                                    "Not found: member '{}' of {:?}",
+                                    intern.borrow().resolve(s).unwrap(),
+                                    ty
+                                ),
+                                ErrorType::UnImplemented => "Feature not implemented".to_string(),
+                            };
+                            let error = error::Error::new(e.file, message, e.span, "");
+                            context.write_error(error).unwrap()
                         }
-                        ErrorType::MemberNotFound(ty, s) => format!(
-                            "Not found: member '{}' of {:?}",
-                            intern.borrow().resolve(s).unwrap(),
-                            ty
-                        ),
-                        ErrorType::UnImplemented => format!("Feature not implemented"),
-                    };
-                    let error = error::Error::new(e.file, message, e.span, "");
-                    context.write_error(error).unwrap()
+                    }
                 }
-            },
+            }
             Err(e) => context.write_error(e).unwrap(),
         }
-        // } else {
-        //     break;
-        // }
     }
 }

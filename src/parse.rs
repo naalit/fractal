@@ -156,6 +156,15 @@ fn parse_line(
             let arms = parse_fun(file, intern, context, p.into_inner())?;
             Term::Fun(arms)
         }
+        Rule::block => Term::Block(
+            p.into_inner()
+                .filter(filter_silent)
+                .map(|x| parse_line(file, intern, context, x))
+                .try_fold(Vec::new(), |mut acc, x| {
+                    acc.push(x?);
+                    Ok(acc)
+                })?,
+        ),
         Rule::line | Rule::fun_pat => {
             use pest::prec_climber::*;
             let ops = vec![
@@ -237,6 +246,26 @@ mod tests {
                 _ => panic!("Parse failed"),
             }
         };
+    }
+
+    #[test]
+    fn test_block() {
+        assert_matches! {
+            clean_parse("f do\n x = do\n  y = 2\n y = 3") => {
+                x => Term::App(f,b),
+                f => Term::Var(_),
+                b => Term::Block(v),
+                v[0] => Term::Def(x,b2),
+                x => Term::Var(_),
+                b2 => Term::Block(v2),
+                v2[0] => Term::Def(y,two),
+                y => Term::Var(_),
+                two => Term::Int(2),
+                v[1] => Term::Def(y,three),
+                y => Term::Var(_),
+                three => Term::Int(3)
+            }
+        }
     }
 
     #[test]
