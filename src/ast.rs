@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use string_interner::Sym;
 
 /// An AST node, with error reporting information attached
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Node {
     pub file: codespan::FileId,
     pub span: codespan::Span,
@@ -13,6 +13,8 @@ impl Node {
     /// This is mostly for feedback of the parser
     pub fn format(&self, intern: &crate::parse::Intern) -> String {
         match &self.val {
+            Term::Nil => "()".to_string(),
+            Term::Rec(s) => format!("rec {}", intern.borrow().resolve(*s).unwrap()),
             Term::Var(s) => intern.borrow().resolve(*s).unwrap().to_string(),
             Term::Int(i) => i.to_string(),
             Term::Float(f) => f.to_string(),
@@ -45,7 +47,14 @@ impl std::ops::Deref for Node {
         &self.val
     }
 }
+impl std::fmt::Debug for Node {
+    /// We don't care that it's wrapped in a Node, so this just calls Term::fmt()
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.val.fmt(f)
+    }
+}
 
+#[derive(Clone)]
 pub struct Env<T> {
     pub env: HashMap<Sym, T>,
     pub modules: HashMap<Type, HashMap<Sym, T>>,
@@ -65,6 +74,7 @@ impl<T> Env<T> {
 }
 
 /// A nominal type, which is mostly for use as a namespace
+/// All this stuff will probably be replaced when we decide how type namespaces will actually work
 #[derive(PartialEq, Hash, Eq, Debug, Clone)]
 pub enum Type {
     /// A built-in number type
@@ -73,27 +83,59 @@ pub enum Type {
     /// A function with the given return type
     Fun(Box<Type>),
     Tuple(Box<Type>, Box<Type>),
+    /// This is a recursive call, so it's whatever the parent thinks it is (based on the base case)
+    Rec,
     /// The type could be unknown, or it might just not have one
     None,
 }
 
 pub trait Typeable {
     fn ty(&self, env: &Env<impl Typeable>) -> Type;
+    // This shouldn't be called recursively, and it gives Rec a chance to resolve
+    fn ty_once(&self, env: &Env<impl Typeable>) -> Type {
+        self.ty(env)
+    }
 }
 impl Typeable for Term {
+    fn ty_once(&self, env: &Env<impl Typeable>) -> Type {
+        match self {
+            Term::Rec(s) => env.get_ty(*s).unwrap_or(Type::None),
+            Term::Var(s) => env.get_ty(*s).unwrap_or(Type::None),
+            Term::Rec(s) => Type::Rec,
+            Term::Dot(x, s) => env
+                .modules
+                .get(&x.ty_once(env))
+                .and_then(|m| m.get(s))
+                .map(|x| x.ty_once(env))
+                .unwrap_or(Type::None),
+            Term::Int(_) | Term::Float(_) => Type::Num,
+            Term::Tuple(a, b) => Type::Tuple(Box::new(a.ty_once(env)), Box::new(b.ty_once(env))),
+            Term::App(a, _b) => match a.ty_once(env) {
+                Type::Fun(x) => *x,
+                y => y,
+            },
+            Term::Fun(x) => type_fun(&x, env),
+            _ => Type::None,
+        }
+    }
     fn ty(&self, env: &Env<impl Typeable>) -> Type {
         match self {
             Term::Var(s) => env.get_ty(*s).unwrap_or(Type::None),
-            Term::Dot(x, s) => env
-                .modules
-                .get(&x.ty(env))
-                .and_then(|m| m.get(s))
-                .map(|x| x.ty(env))
-                .unwrap_or(Type::None),
+            Term::Rec(s) => Type::Rec,
+            Term::Dot(x, s) => match x.ty(env) {
+                Type::Rec => Type::Rec,
+                t => env
+                    .modules
+                    .get(&t)
+                    .and_then(|m| m.get(s))
+                    .map(|x| x.ty(env))
+                    .unwrap_or(Type::None),
+            },
             Term::Int(_) | Term::Float(_) => Type::Num,
             Term::Tuple(a, b) => Type::Tuple(Box::new(a.ty(env)), Box::new(b.ty(env))),
             Term::App(a, _b) => match a.ty(env) {
                 Type::Fun(x) => *x,
+                Type::Rec => Type::Rec,
                 y => y,
             },
             Term::Fun(x) => type_fun(&x, env),
@@ -102,6 +144,9 @@ impl Typeable for Term {
     }
 }
 impl Typeable for Node {
+    fn ty_once(&self, env: &Env<impl Typeable>) -> Type {
+        self.val.ty_once(env)
+    }
     fn ty(&self, env: &Env<impl Typeable>) -> Type {
         self.val.ty(env)
     }
@@ -109,9 +154,11 @@ impl Typeable for Node {
 
 pub fn type_fun(x: &[Fun], env: &Env<impl Typeable>) -> Type {
     let mut tys = x.iter().map(|x| x.rhs.ty(env));
-    let t = tys.next().unwrap().clone();
+    let mut t = tys.next().unwrap().clone();
     for i in tys {
-        if i != t {
+        if t == Type::Rec {
+            t = i;
+        } else if i != Type::Rec && i != t {
             return Type::Fun(Box::new(Type::None));
         }
     }
@@ -121,6 +168,8 @@ pub fn type_fun(x: &[Fun], env: &Env<impl Typeable>) -> Type {
 /// The actual thing that's inside a `Node`
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
+    Nil,
+    Rec(Sym),
     Var(Sym),
     Int(i32),
     Float(f32),

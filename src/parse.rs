@@ -43,7 +43,9 @@ impl Rule {
             Rule::def => "'='",
             Rule::keyword => "keyword",
             Rule::fun => "function",
+            Rule::rec => "rec",
             Rule::fun_pat | Rule::fun_arm => "pattern",
+            Rule::nil => "()",
             _ => "other",
         }
     }
@@ -141,6 +143,7 @@ fn parse_line(
     };
     let span = pest_span(p.as_span());
     let val = match p.as_rule() {
+        Rule::nil => Term::Nil,
         Rule::num => {
             let s = p.as_str().trim();
             if let Ok(i) = s.parse::<i32>() {
@@ -151,6 +154,12 @@ fn parse_line(
                 panic!("We can't parse something that matched the 'num' rule!")
             }
         }
+        // Remove the 'rec' keyword, but don't bother recursing; we know there's a 'var' in there.
+        Rule::rec => Term::Rec(
+            intern
+                .borrow_mut()
+                .get_or_intern(p.as_str().trim()[3..].trim()),
+        ),
         Rule::var | Rule::sym => Term::Var(intern.borrow_mut().get_or_intern(p.as_str())),
         Rule::fun => {
             let arms = parse_fun(file, intern, context, p.into_inner())?;

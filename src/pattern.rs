@@ -71,6 +71,7 @@ fn roughly_equal_f32(a: f32, b: f32) -> bool {
 impl Match for Term {
     fn match_strict(&self, other: &Value) -> MatchResult {
         match (self, other) {
+            (Term::Nil, Value::Nil) => MatchResult::Pass(Vec::new()),
             (Term::Var(s), x) => MatchResult::Pass(vec![(*s, x.clone())]),
             (Term::Int(x), Value::Int(y)) if x == y => MatchResult::Pass(Vec::new()),
             (Term::Float(x), Value::Float(y)) if roughly_equal_f32(*x, *y) => {
@@ -99,6 +100,8 @@ impl Match for Term {
 
     fn match_conservative(&self, other: &Term) -> TBool {
         match (self, other) {
+            (Term::Nil, Term::Nil) => True,
+            (Term::Nil, _) => False,
             (Term::Var(_), _) => True,
             (Term::Int(x), Term::Int(y)) => {
                 if x == y {

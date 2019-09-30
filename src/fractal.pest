@@ -1,8 +1,10 @@
-keyword = @{ "fun" | "do" }
+keyword = @{ "fun" | "do" | "rec" }
 num = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 var = @{ !num ~ !keyword ~ (ASCII_ALPHANUMERIC | "_")+ }
 sym = @{ (!(ASCII_ALPHANUMERIC | WHITESPACE | "(" | ")" | "\n" | "_"  | "." | "|" | "," | "=" | ":" | "$") ~ ANY)+ }
-atom = _{ num | sym | var | paren }
+nil = { "(" ~ ")" }
+rec = { "rec" ~ var }
+atom = _{ nil | rec | num | sym | var | paren }
 
 tuple = { "," }
 union = { "|" }

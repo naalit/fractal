@@ -116,7 +116,7 @@ impl EvalContext {
         let Node { span, file, val } = node;
         match val {
             Term::Dot(a, s) => {
-                let ty = a.ty(&self.env);
+                let ty = a.ty_once(&self.env);
                 match self.env.modules.get(&ty).and_then(|x| x.get(&s)) {
                     Some(x) => Ok(Value::Partial(
                         Box::new(x.clone()),
@@ -125,7 +125,7 @@ impl EvalContext {
                     None => Err(EvalError::new(span, file, ErrorType::MemberNotFound(ty, s))),
                 }
             }
-            Term::Var(s) => match self.env.get(s) {
+            Term::Var(s) | Term::Rec(s) => match self.env.get(s) {
                 Some(v) => Ok(v.clone()),
                 None => Err(EvalError::new(span, file, ErrorType::NotFound(s))),
             },
@@ -155,7 +155,7 @@ impl EvalContext {
                         Some((body, MatchResult::Pass(sub))) => {
                             let mut old = Vec::new();
                             for (k, v) in sub {
-                                if let Some(v) = self.env.env.insert(k.clone(), v) {
+                                if let Some(v) = self.env.env.insert(k, v) {
                                     old.push((k, v));
                                 }
                             }
@@ -163,7 +163,7 @@ impl EvalContext {
                             let r = self.eval(body.clone());
 
                             for (k, v) in old {
-                                self.env.env.insert(k.clone(), v);
+                                self.env.env.insert(k, v);
                             }
 
                             r
@@ -184,6 +184,16 @@ impl EvalContext {
                 _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
             },
             Term::Fun(f) => Ok(Value::Fun(Rc::new(f))),
+            Term::Block(v) => {
+                let old = self.env.clone();
+                let mut last = Value::Nil;
+                for i in v {
+                    last = self.eval(i)?;
+                }
+                self.env = old;
+                Ok(last)
+            }
+            Term::Nil => Ok(Value::Nil),
             _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
         }
     }
