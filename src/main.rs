@@ -16,7 +16,7 @@ fn main() {
     let mut buf = String::new();
 
     let args: Vec<String> = std::env::args().collect();
-    let in_file = args.iter().find(|x| x.rfind(".fr").is_some());
+    let in_file = args.iter().find(|x| x.rfind(".fl").is_some());
     let verbose = args
         .iter()
         .any(|x| x.trim() == "-v" || x.trim() == "--verbose");
