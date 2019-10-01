@@ -31,6 +31,7 @@ impl Rule {
             Rule::dot => "'.'",
             Rule::tuple => "','",
             Rule::union => "'|'",
+            Rule::inter => ":",
             Rule::app => "application",
             Rule::indent => "indent",
             Rule::dedent => "dedent",
@@ -110,6 +111,7 @@ fn parse_line(
         let val = match op.as_rule() {
             Rule::tuple => Term::Tuple(Box::new(lhs), Box::new(rhs)),
             Rule::union => Term::Union(Box::new(lhs), Box::new(rhs)),
+            Rule::inter => Term::Inter(Box::new(lhs), Box::new(rhs)),
             Rule::def => Term::Def(Box::new(lhs), Box::new(rhs)),
             // Rule::fun_sym => Term::Fun(Box::new(lhs), Box::new(rhs)),
             Rule::dot => {
@@ -183,6 +185,7 @@ fn parse_line(
                 Operator::new(Rule::sym, Assoc::Left),
                 Operator::new(Rule::app, Assoc::Left),
                 Operator::new(Rule::tuple, Assoc::Right),
+                Operator::new(Rule::inter, Assoc::Right),
                 Operator::new(Rule::dot, Assoc::Left),
             ];
             let climber = PrecClimber::new(ops);
@@ -255,6 +258,42 @@ mod tests {
                 _ => panic!("Parse failed"),
             }
         };
+    }
+
+    #[test]
+    fn test_comment() {
+        assert_matches! {
+            clean_parse(r#"
+            zero # One
+            # Two
+             = # Three
+            # Four
+              5 # Six
+            # Seven
+            "#) => {
+                x => Term::Def(z,f),
+                z => Term::Var(_),
+                f => Term::Int(5)
+            }
+        }
+    }
+
+    #[test]
+    fn test_inter() {
+        assert_matches! {
+            // This should be prec = fun (S (x: Nat)) => x
+            clean_parse("prec = fun\n  S x : Nat => x") => {
+                x => Term::Def(prec, x),
+                prec => Term::Var(_),
+                x => Term::Fun(f),
+                f[0].lhs => Term::App(s, xnat),
+                s => Term::Var(_),
+                xnat => Term::Inter(x, nat),
+                x => Term::Var(_),
+                nat => Term::Var(_),
+                f[0].rhs => Term::Var(_)
+            }
+        }
     }
 
     #[test]

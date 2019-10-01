@@ -8,9 +8,10 @@ atom = _{ nil | rec | num | sym | var | paren }
 
 tuple = { "," }
 union = { "|" }
-dot = { "." }
-def = { !("=>") ~ "=" }
-op = _{ tuple | union | dot | sym | var }
+inter = { ":" }
+dot   = { "." }
+def   = { !("=>") ~ "=" }
+op = _{ tuple | union | inter | dot | sym | var }
 
 app = { "" }
 close_paren = { ")" }
@@ -27,7 +28,10 @@ node_d = _{ atom ~ (op ~ atom | app ~ atom)* }
 node_e = _{ atom ~ (op | app) ~ (atom ~ (op | app))* ~ block }
 line = { block | definition | fun | node_e | node_a | node_c | node_b | node_d }
 
-definition = _{ node_d ~ def ~ line }
+definition = _{ node_d ~ (def ~ line
+	| indent ~ def ~ line ~ dedent
+  | def ~ indent ~ line ~ dedent
+  | indent ~ def ~ samedent ~ line ~ dedent ~ dedent) }
 
 fun_pat = { node_d }
 fun_arm = { fun_pat ~ "=>" ~ line }
@@ -35,8 +39,10 @@ fun = { "fun" ~ (fun_arm | indent ~ fun_arm ~ (samedent ~ fun_arm)* ~ dedent) }
 
 prog = _{ SOI ~ "\n"* ~ line ~ ("\n"+ ~ line)* ~ "\n"* ~ EOI }
 
-indent = @{ "\n"+ ~ PEEK[..] ~ PUSH(WHITESPACE+) }
-dedent = @{ EOI | &("\n"+ ~ !PEEK[..]) ~ DROP }
-samedent = @{ "\n"+ ~ PEEK[..] }
+blank = @{ "\n" | WHITESPACE* ~ COMMENT ~ "\n" }
+indent = @{ blank+ ~ PEEK[..] ~ PUSH(WHITESPACE+) }
+dedent = @{ ((WHITESPACE | blank)* ~ EOI) | &(blank+ ~ !PEEK[..]) ~ DROP }
+samedent = @{ blank+ ~ PEEK[..] }
 
 WHITESPACE = _{ " " }
+COMMENT = _{ "#" ~ (!"\n" ~ ANY)* }

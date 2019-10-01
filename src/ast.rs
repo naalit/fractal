@@ -20,6 +20,7 @@ impl Node {
             Term::Float(f) => f.to_string(),
             Term::Tuple(a, b) => format!("{}, {}", a.format(intern), b.format(intern)).to_string(),
             Term::Union(a, b) => format!("{} | {}", a.format(intern), b.format(intern)).to_string(),
+            Term::Inter(a, b) => format!("{} : {}", a.format(intern), b.format(intern)).to_string(),
             Term::Dot(a, s) => format!(
                 "{}.{}",
                 a.format(intern),
@@ -175,6 +176,8 @@ pub enum Term {
     Float(f32),
     Tuple(Box<Node>, Box<Node>),
     Union(Box<Node>, Box<Node>),
+    /// The Intersection of two patterns - represented with `:`
+    Inter(Box<Node>, Box<Node>),
     Dot(Box<Node>, Sym),
     Block(Vec<Node>),
     App(Box<Node>, Box<Node>),

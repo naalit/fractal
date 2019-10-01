@@ -214,7 +214,7 @@ impl EvalContext {
                 match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
                     (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-                    _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                    _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 }
             }
             Value::Builtin(Builtin::Sub) => {
@@ -222,7 +222,7 @@ impl EvalContext {
                 match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
                     (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-                    _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                    _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 }
             }
             Value::Builtin(Builtin::Mul) => {
@@ -230,7 +230,7 @@ impl EvalContext {
                 match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
                     (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-                    _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                    _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 }
             }
             Value::Builtin(Builtin::Div) => {
@@ -238,7 +238,7 @@ impl EvalContext {
                 match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
                     (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-                    _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                    _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 }
             }
             _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),

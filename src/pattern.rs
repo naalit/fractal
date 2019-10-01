@@ -14,6 +14,15 @@ impl MatchResult {
             MatchResult::Fail => false,
         }
     }
+    pub fn and(self, other: Self) -> Self {
+        match (self,other) {
+            (MatchResult::Pass(mut a), MatchResult::Pass(mut b)) => {
+                a.append(&mut b);
+                MatchResult::Pass(a)
+            },
+            _ => MatchResult::Fail,
+        }
+    }
 }
 
 /// Three-value logic
@@ -94,6 +103,7 @@ impl Match for Term {
                     b.match_strict(x)
                 }
             }
+            (Term::Inter(a, b), x) => a.match_strict(x).and(b.match_strict(x)),
             _ => MatchResult::Fail,
         }
     }
@@ -123,6 +133,7 @@ impl Match for Term {
                 a.match_conservative(a2) & b.match_conservative(b2)
             }
             (Term::Union(a, b), x) => a.match_conservative(x) | b.match_conservative(x),
+            (Term::Inter(a, b), x) => a.match_conservative(x) & b.match_conservative(x),
             _ => Maybe,
         }
     }
