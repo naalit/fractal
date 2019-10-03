@@ -31,13 +31,24 @@ impl Node {
                 let mut s = String::from("do");
                 for i in v {
                     // TODO make indentation work in nested blocks
-                    s.push_str("\n  ");
-                    s.push_str(&i.format(intern));
+                    s.push_str("\n");
+                    // TODO fix indentation
+                    s.push_str(&format!("{:indent$}{}", "", i.format(intern), indent=2));
                 }
                 s
             }
             Term::App(a, b) => format!("{}({})", a.format(intern), b.format(intern)).to_string(),
-            Term::Fun(v) => format!("do {:#?}", v),
+            Term::Fun(v) => {
+                let mut s = String::from("fun");
+                for i in v {
+                    // TODO make indentation work in nested blocks
+                    s.push_str("\n");
+                    s.push_str(&format!("{:indent$}{}", "", i.lhs.format(intern), indent=2));
+                    s.push_str(" => ");
+                    s.push_str(format!("{:indent$}{}", "", i.rhs.format(intern), indent=2).trim());
+                }
+                s
+            }
             Term::Def(a, b) => format!("{} = {}", a.format(intern), b.format(intern)).to_string(),
         }
     }
@@ -66,6 +77,12 @@ impl<T: Typeable> Env<T> {
     }
 }
 impl<T> Env<T> {
+    pub fn new() -> Self {
+        Env {
+            env: HashMap::new(),
+            modules: HashMap::new(),
+        }
+    }
     pub fn get(&self, s: Sym) -> Option<&T> {
         self.env.get(&s)
     }
@@ -183,6 +200,21 @@ pub enum Term {
     App(Box<Node>, Box<Node>),
     Fun(Vec<Fun>),
     Def(Box<Node>, Box<Node>),
+}
+
+use crate::vm::Value;
+
+impl Term {
+    /// If this term is just a value, return that value
+    pub fn simple(&self) -> Option<Value> {
+        match self {
+            Term::Nil => Some(Value::Nil),
+            Term::Int(i) => Some(Value::Int(*i)),
+            Term::Float(f) => Some(Value::Float(*f)),
+            Term::Tuple(x, y) => Some(Value::Tuple(Box::new(x.simple()?), Box::new(y.simple()?))),
+            _ => None,
+        }
+    }
 }
 
 /// Represents a match arm in a `fun`

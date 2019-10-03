@@ -23,15 +23,45 @@ fn main() {
 
     if let Some(f) = in_file {
         let mut s = String::new();
+        use pattern::Total;
+        let tfun = std::rc::Rc::new(Total::Fun(vec![(std::rc::Rc::new(Total::Any), std::rc::Rc::new(Total::Any))]));
         std::fs::File::open(f)
             .expect("Couldn't open file")
             .read_to_string(&mut s)
             .unwrap();
+            let env = vec![("print", tfun.clone()), ("sqr", tfun.clone())]
+                .into_iter()
+                .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), b))
+                .collect();
+            let modules = vec![(
+                ast::Type::Num,
+                vec![
+                    ("+", tfun.clone()),
+                    ("-", tfun.clone()),
+                    ("*", tfun.clone()),
+                    ("/", tfun.clone()),
+                ]
+                .into_iter()
+                .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), b))
+                .collect(),
+            )]
+            .into_iter()
+            .collect();
+        let mut env = ast::Env {
+            env,
+            modules,
+        };
         match parse::parse_str(&intern, &mut context, f, s) {
             Ok(result) => {
                 for i in result {
                     if verbose {
                         println!("{}", i.format(&intern));
+                    }
+                    if pattern::verify(&i, &mut env) {
+                        if verbose { println!("Checks out!"); }
+                    } else {
+                        println!("MATCH ERROR! AAAAHHHH!");
+                        return;
                     }
                     match e.eval(i) {
                         Ok(Value::Nil) => (),
@@ -94,6 +124,12 @@ fn main() {
                     for i in result {
                         if verbose {
                             println!("{}", i.format(&intern));
+                        }
+                        if pattern::verify(&i, &mut ast::Env::new()) {
+                            println!("Checks out!");
+                        } else {
+                            println!("MATCH ERROR! AAAAHHHH!");
+                            continue;
                         }
                         match e.eval(i) {
                             Ok(Value::Nil) => (),
