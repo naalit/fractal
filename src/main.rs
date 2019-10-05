@@ -23,7 +23,6 @@ fn main() {
         .any(|x| x.trim() == "-v" || x.trim() == "--verbose");
 
     let mut env = builtin::totals();
-    println!("{:?}", env.modules);
 
     if let Some(f) = in_file {
         let mut s = String::new();

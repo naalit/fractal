@@ -25,9 +25,11 @@ impl MatchError {
         match self {
             MatchError::Pat(l,r) => {
                 let message = format!("Couldn't match {:?} with {:?}", r, l);
+                let message_r = format!("Matching this: {:?}", r);
+                let message_l = format!("With this: {:?}", l);
                 vec![
-                Error::new(r.file, &message, r.span, "Matching this"),
-                Error::new(l.file, message, l.span, "With this")]
+                Error::new(r.file, &message, r.span, message_r),
+                Error::new(l.file, message, l.span, message_l)]
             },
             MatchError::Multi(v) => v.into_iter().flat_map(|x| x.error()).collect(),
             MatchError::NotFun(f) => vec![Error::new(f.file, format!("{:?} is not a function", f), f.span, "Used here as a function")],
@@ -46,7 +48,10 @@ pub fn verify(n: &BTerm, env: &mut Env<BTotal>) -> Result<(), MatchError> {
                 // TODO check for multiple branches that together provide exhaustiveness
                 Total::Fun(f) => {
                     // TODO somehow verify pattern matches or something
-                    let v: Vec<_> = f.iter().filter_map(|(p,_)| if p.will_match(&x).yes() { None } else { Some(MatchError::Pat(p.clone(), x.clone())) }).collect();
+                    let v: Vec<_> = f.iter().filter_map(|(p,_)| match p.will_match(&x) {
+                        Ok(x) => None,
+                        Err(e) => Some(e),
+                    }).collect();
                     if v.is_empty() {
                         Ok(())
                     } else {
@@ -75,11 +80,12 @@ pub fn verify(n: &BTerm, env: &mut Env<BTotal>) -> Result<(), MatchError> {
             Ok(())
         }
         Term::Def(l, r) => match l.total(env).will_match(&Rc::new(r.total(env))) {
-            WillMatch::Yes(v) => {
+            Ok(v) => {
+                println!("defining {:?}", v);
                 env.env.extend(v);
                 verify(r, env)
             }
-            _ => Err(MatchError::Pat(l.total(env), r.total(env))),
+            Err(e) => Err(e),
         }
         Term::Var(v) if !env.env.contains_key(v) => Err(MatchError::NotFound(Node::new(n.span, n.file, *v))),
         _ => Ok(()),
@@ -102,25 +108,7 @@ pub enum Total {
     Any,
 }
 
-pub enum WillMatch {
-    Yes(Vec<(Sym,BTotal)>),
-    Maybe,
-    No,
-}
-impl WillMatch {
-    fn yes(&self) -> bool {
-        match self {
-            WillMatch::Yes(_) => true,
-            _ => false,
-        }
-    }
-    fn no(&self) -> bool {
-        match self {
-            WillMatch::No => true,
-            _ => false,
-        }
-    }
-}
+pub type WillMatch = Result<Vec<(Sym, BTotal)>, MatchError>;
 
 pub fn merge<T>(mut a: Vec<T>, mut b: Vec<T>) -> Vec<T> {
     a.append(&mut b);
@@ -152,47 +140,45 @@ impl BTotal {
 
     pub fn will_match(&self, other: &BTotal) -> WillMatch {
         match (&**self,&**other) {
-            (Total::Num, Total::Num) => WillMatch::Yes(vec![]),
-            (Total::Num, Total::Unit(Value::Int(_))) => WillMatch::Yes(vec![]),
-            (Total::Num, Total::Unit(Value::Float(_))) => WillMatch::Yes(vec![]),
-            (Total::Var(s), _) => WillMatch::Yes(vec![(*s, other.clone())]),
-            (Total::Any, _) => WillMatch::Yes(vec![]),
+            (Total::Num, Total::Num) => Ok(vec![]),
+            (Total::Num, Total::Unit(Value::Int(_))) => Ok(vec![]),
+            (Total::Num, Total::Unit(Value::Float(_))) => Ok(vec![]),
+            (Total::Var(s), _) => Ok(vec![(*s, other.clone())]),
+            (Total::Any, _) => Ok(vec![]),
             (Total::Unit(a), Total::Unit(b)) => if a == b {
-                WillMatch::Yes(vec![])
+                Ok(vec![])
             } else {
-                WillMatch::No
+                Err(MatchError::Pat(self.clone(), other.clone()))
             }
             (Total::Inter(a,b), _) => match a.will_match(other) {
-                WillMatch::Yes(x) => match b.will_match(other) {
-                    WillMatch::Yes(y) => WillMatch::Yes(merge(x,y)),
-                    n => n,
+                Ok(x) => match b.will_match(other) {
+                    Ok(y) => Ok(merge(x,y)),
+                    Err(e) => Err(e),
                 }
-                WillMatch::Maybe => match b.will_match(other) {
-                    WillMatch::No => WillMatch::No,
-                    _ => WillMatch::Maybe,
+                Err(e) => match b.will_match(other) {
+                    Ok(x) => Ok(x),
+                    Err(e2) => Err(MatchError::Multi(vec![e, e2])),
                 }
-                n => n,
             }
             (Total::Union(a,b), _) => match a.will_match(other) {
                 // Unions don't bind variables
-                WillMatch::Yes(_) => WillMatch::Yes(vec![]),
-                _ => match b.will_match(other) {
-                    WillMatch::Yes(_) => WillMatch::Yes(vec![]),
-                    // This doesn't quite handle Maybes right, but that's probably fine
-                    // (e.g. if a is maybe and b is no it will say no instead of maybe)
-                    x => x,
+                Ok(_) => Ok(vec![]),
+                Err(e) => match b.will_match(other) {
+                    Ok(_) => Ok(vec![]),
+                    Err(e2) => Err(MatchError::Multi(vec![e, e2])),
                 }
             }
-            _ => WillMatch::Maybe,
+            _ => Err(MatchError::Pat(self.clone(), other.clone())),
         }
     }
 }
 
 pub trait HasTotal {
-    fn total(&self, e: &Env<BTotal>) -> BTotal;
+    fn total(&self, e: &mut Env<BTotal>) -> BTotal;
 }
 impl HasTotal for BTerm {
-    fn total(&self, env: &Env<BTotal>) -> BTotal {
+    // TODO merge with verify
+    fn total(&self, env: &mut Env<BTotal>) -> BTotal {
         let Node { span, file, .. } = self;
         let t = if let Some(v) = self.simple() {
             Total::Unit(v)
@@ -213,8 +199,36 @@ impl HasTotal for BTerm {
                 } else {
                     Total::Var(*s)
                 }
+                Term::App(f, x) => {
+                    let f = f.total(env);
+                    let x = x.total(env);
+                    match &*f {
+                        // TODO propagate error
+                        Total::Fun(v) => (*v.iter().find(|(pat,_)| pat.will_match(&x).is_ok()).unwrap().1).clone(),
+                        _ => panic!(""),
+                    }
+                }
                 Term::Union(x, y) => Total::Union(x.total(env), y.total(env)),
-                Term::Fun(v) => Total::Fun(v.iter().map(|x| (x.lhs.total(env), x.rhs.total(env))).collect()),
+                Term::Fun(v) => Total::Fun(v.iter().map(|Fun {lhs,rhs}| {
+                        let l = lhs.total(env);
+                        let g = l.guaranteed();
+                        // Keep track of what we're adding to the env
+                        let mut old = Vec::new();
+                        let mut remove = Vec::with_capacity(g.len());
+                        for (k,v) in g {
+                            remove.push(k);
+                            if let Some(v) = env.env.insert(k, v) {
+                                old.push((k,v));
+                            }
+                        }
+                        let r = rhs.total(env);
+                        // Put the old env definitions back
+                        for k in remove {
+                            env.env.remove(&k);
+                        }
+                        env.env.extend(old);
+                        (l,r)
+                    }).collect()),
                 Term::Inter(x, y) => Total::Inter(x.total(env), y.total(env)),
                 _ => Total::Any,
             }
