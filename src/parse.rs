@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use crate::ast::*;
 use crate::error::*;
 use codespan::FileId;
@@ -5,10 +7,16 @@ use codespan::Span;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
-use std::cell::RefCell;
+use std::sync::RwLock;
 use string_interner::{StringInterner, Sym};
+use lazy_static::lazy_static;
+use std::rc::Rc;
 
-pub type Intern = RefCell<StringInterner<Sym>>;
+pub type Intern = RwLock<StringInterner<Sym>>;
+
+lazy_static! {
+    pub static ref intern: Intern = RwLock::new(StringInterner::new());
+}
 
 #[derive(Parser)]
 #[grammar = "fractal.pest"]
@@ -57,23 +65,21 @@ fn pest_span(span: pest::Span) -> Span {
 }
 
 pub fn parse_str(
-    intern: &Intern,
     context: &mut ErrorContext,
     file: impl Into<String>,
     source: impl Into<String>,
-) -> Result<Vec<Node>> {
+) -> Result<Vec<BTerm>> {
     let source: String = source.into();
     let p = FractalPest::parse(Rule::prog, &source);
     let file = context.add_file(file, &source);
     match p {
-        Ok(p) => pest_to_ast(file, intern, context, p),
+        Ok(p) => pest_to_ast(file, context, p),
         Err(e) => Err(Error::from_pest(e, file)),
     }
 }
 
 fn parse_fun(
     file: FileId,
-    intern: &Intern,
     context: &ErrorContext,
     tree: Pairs<Rule>,
 ) -> Result<Vec<Fun>> {
@@ -83,9 +89,9 @@ fn parse_fun(
             Rule::fun_arm => {
                 let mut i = i.into_inner();
                 let pat = i.next().unwrap();
-                let pat = parse_line(file, intern, context, pat)?;
+                let pat = parse_line(file, context, pat)?;
                 let body = i.next().unwrap();
-                let body = parse_line(file, intern, context, body)?;
+                let body = parse_line(file, context, body)?;
                 Fun {
                     lhs: pat,
                     rhs: body,
@@ -100,23 +106,22 @@ fn parse_fun(
 
 fn parse_line(
     file: FileId,
-    intern: &Intern,
     context: &ErrorContext,
     p: Pair<Rule>,
-) -> Result<Node> {
-    let infix = |lhs: Result<Node>, op: Pair<Rule>, rhs: Result<Node>| -> Result<Node> {
+) -> Result<BTerm> {
+    let infix = |lhs: Result<BTerm>, op: Pair<Rule>, rhs: Result<BTerm>| -> Result<BTerm> {
         let lhs = lhs?;
         let rhs = rhs?;
         let span = lhs.span.merge(rhs.span);
         let val = match op.as_rule() {
-            Rule::tuple => Term::Tuple(Box::new(lhs), Box::new(rhs)),
-            Rule::union => Term::Union(Box::new(lhs), Box::new(rhs)),
-            Rule::inter => Term::Inter(Box::new(lhs), Box::new(rhs)),
-            Rule::def => Term::Def(Box::new(lhs), Box::new(rhs)),
+            Rule::tuple => Term::Tuple(lhs, rhs),
+            Rule::union => Term::Union(lhs, rhs),
+            Rule::inter => Term::Inter(lhs, rhs),
+            Rule::def => Term::Def(lhs, rhs),
             // Rule::fun_sym => Term::Fun(Box::new(lhs), Box::new(rhs)),
             Rule::dot => {
-                if let Term::Var(s) = rhs.val {
-                    Term::Dot(Box::new(lhs), s)
+                if let Term::Var(s) = &*rhs.val {
+                    Term::Dot(lhs, *s)
                 } else {
                     return Err(Error::new(
                         file,
@@ -126,22 +131,22 @@ fn parse_line(
                     ));
                 }
             }
-            Rule::app => Term::App(Box::new(lhs), Box::new(rhs)),
+            Rule::app => Term::App(lhs, rhs),
             Rule::var | Rule::sym => {
-                let sym = intern.borrow_mut().get_or_intern(op.as_str().trim());
+                let sym = intern.write().unwrap().get_or_intern(op.as_str().trim());
                 let span = lhs.span.merge(pest_span(op.as_span()));
                 Term::App(
-                    Box::new(Node {
-                        val: Term::Dot(Box::new(lhs), sym),
+                    Node {
+                        val: Rc::new(Term::Dot(lhs, sym)),
                         file,
                         span,
-                    }),
-                    Box::new(rhs),
+                    },
+                    rhs,
                 )
             }
             x => panic!("Unknown op {:?}", x),
         };
-        Ok(Node { file, span, val })
+        Ok(Node { file, span, val: Rc::new(val) })
     };
     let span = pest_span(p.as_span());
     let val = match p.as_rule() {
@@ -159,18 +164,19 @@ fn parse_line(
         // Remove the 'rec' keyword, but don't bother recursing; we know there's a 'var' in there.
         Rule::rec => Term::Rec(
             intern
-                .borrow_mut()
+                .write()
+                .unwrap()
                 .get_or_intern(p.as_str().trim()[3..].trim()),
         ),
-        Rule::var | Rule::sym => Term::Var(intern.borrow_mut().get_or_intern(p.as_str())),
+        Rule::var | Rule::sym => Term::Var(intern.write().unwrap().get_or_intern(p.as_str())),
         Rule::fun => {
-            let arms = parse_fun(file, intern, context, p.into_inner())?;
+            let arms = parse_fun(file, context, p.into_inner())?;
             Term::Fun(arms)
         }
         Rule::block => Term::Block(
             p.into_inner()
                 .filter(filter_silent)
-                .map(|x| parse_line(file, intern, context, x))
+                .map(|x| parse_line(file, context, x))
                 .try_fold(Vec::new(), |mut acc, x| {
                     acc.push(x?);
                     Ok(acc)
@@ -191,28 +197,27 @@ fn parse_line(
             let climber = PrecClimber::new(ops);
             // The '.val' here is a little annoying - we're taking a node, taking out the term, and converting it back to a node
             // However, I don't know that there's really a better way
-            climber
+            Rc::try_unwrap(climber
                 .climb(
                     p.into_inner().filter(filter_silent),
-                    |x| parse_line(file, intern, context, x),
+                    |x| parse_line(file, context, x),
                     infix,
                 )?
-                .val
+                .val).unwrap()
         }
         x => panic!("Unknown primary rule {:?}", x),
     };
-    Ok(Node { file, span, val })
+    Ok(Node { file, span, val: Rc::new(val) })
 }
 
 pub fn pest_to_ast(
     file: FileId,
-    intern: &Intern,
     context: &ErrorContext,
     tree: Pairs<Rule>,
-) -> Result<Vec<Node>> {
+) -> Result<Vec<BTerm>> {
     let mut v = Vec::new();
     for i in tree.filter(filter_silent) {
-        let x = parse_line(file, intern, context, i)?;
+        let x = parse_line(file, context, i)?;
         v.push(x);
     }
     Ok(v)
@@ -222,10 +227,9 @@ pub fn pest_to_ast(
 mod tests {
     use super::*;
 
-    fn clean_parse(s: &str) -> Result<Vec<Node>> {
-        let intern = RefCell::new(StringInterner::new());
+    fn clean_parse(s: &str) -> Result<Vec<BTerm>> {
         let mut context = ErrorContext::new();
-        let p = parse_str(&intern, &mut context, "test", s);
+        let p = parse_str(&mut context, "test", s);
         match &p {
             Ok(_) => (),
             Err(e) => context.write_error(e.clone()).unwrap(),
@@ -235,13 +239,13 @@ mod tests {
 
     macro_rules! assert_matches {
         (@ok $p:expr => $q:pat) => {
-            match &$p.val {
+            match &*$p.val {
                 $q => (),
                 x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
             }
         };
         (@ok $p:expr => $q:pat, $($p1:expr => $q1:pat),*) => {
-            match &$p.val {
+            match &*$p.val {
                 $q => assert_matches!(@ok $($p1 => $q1),*),
                 x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
             }
@@ -250,7 +254,7 @@ mod tests {
             match $start {
                 Ok(p) => {
                     let $p = &p[0];
-                    match &$p.val {
+                    match &*$p.val {
                         $q => assert_matches!(@ok $($x)*),
                         x => panic!("{:?} doesn't match {}", x, stringify!($p => $q)),
                     }

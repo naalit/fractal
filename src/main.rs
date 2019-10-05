@@ -3,6 +3,7 @@ mod error;
 mod parse;
 mod pattern;
 mod vm;
+mod builtin;
 use error::ErrorContext;
 use std::io::Read;
 use std::io::Write;
@@ -11,7 +12,7 @@ use vm::*;
 fn main() {
     let mut context = ErrorContext::new();
     let intern = std::cell::RefCell::new(string_interner::StringInterner::new());
-    let mut e = EvalContext::new(&intern);
+    let mut e = EvalContext::new();
     let mut i = 0;
     let mut buf = String::new();
 
@@ -21,52 +22,36 @@ fn main() {
         .iter()
         .any(|x| x.trim() == "-v" || x.trim() == "--verbose");
 
+    let mut env = builtin::totals();
+    println!("{:?}", env.modules);
+
     if let Some(f) = in_file {
         let mut s = String::new();
-        use pattern::Total;
-        let tfun = std::rc::Rc::new(Total::Fun(vec![(std::rc::Rc::new(Total::Any), std::rc::Rc::new(Total::Any))]));
         std::fs::File::open(f)
             .expect("Couldn't open file")
             .read_to_string(&mut s)
             .unwrap();
-            let env = vec![("print", tfun.clone()), ("sqr", tfun.clone())]
-                .into_iter()
-                .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), b))
-                .collect();
-            let modules = vec![(
-                ast::Type::Num,
-                vec![
-                    ("+", tfun.clone()),
-                    ("-", tfun.clone()),
-                    ("*", tfun.clone()),
-                    ("/", tfun.clone()),
-                ]
-                .into_iter()
-                .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), b))
-                .collect(),
-            )]
-            .into_iter()
-            .collect();
-        let mut env = ast::Env {
-            env,
-            modules,
-        };
-        match parse::parse_str(&intern, &mut context, f, s) {
+        match parse::parse_str(&mut context, f, s) {
             Ok(result) => {
                 for i in result {
                     if verbose {
-                        println!("{}", i.format(&intern));
+                        println!("{}", i.format());
                     }
-                    if pattern::verify(&i, &mut env) {
-                        if verbose { println!("Checks out!"); }
-                    } else {
-                        println!("MATCH ERROR! AAAAHHHH!");
-                        return;
+                    match pattern::verify(&i, &mut env) {
+                        Ok(()) if verbose => println!("Checks out!"),
+                        Ok(()) => (),
+                        Err(e) => {
+                            for i in e.error() {
+                                context.write_error(i).unwrap();
+                            }
+                            continue
+                        },
                     }
                     match e.eval(i) {
                         Ok(Value::Nil) => (),
                         Ok(x) => println!("{}", x),
                         Err(e) => {
+                            println!("Runtime error!");
                             let message = match e.val {
                                 ErrorType::MatchError => "Match failed".to_string(),
                                 ErrorType::NotFound(s) => {
@@ -103,7 +88,7 @@ fn main() {
             // If we can parse this line, do that;
             // If not, assume it's multiple lines and stop when they give us a blank line
             let result = if buf.is_empty() {
-                match parse::parse_str(&intern, &mut context, format!("<interactive:{}>", i), &s) {
+                match parse::parse_str(&mut context, format!("<interactive:{}>", i), &s) {
                     r @ Ok(_) => r,
                     Err(_) => {
                         buf.push_str(&s);
@@ -111,7 +96,7 @@ fn main() {
                     }
                 }
             } else if s.trim().is_empty() {
-                parse::parse_str(&intern, &mut context, format!("<interactive:{}>", i), buf)
+                parse::parse_str(&mut context, format!("<interactive:{}>", i), buf)
             } else {
                 buf.push_str(&s);
                 continue;
@@ -123,18 +108,23 @@ fn main() {
                 Ok(result) => {
                     for i in result {
                         if verbose {
-                            println!("{}", i.format(&intern));
+                            println!("{}", i.format());
                         }
-                        if pattern::verify(&i, &mut ast::Env::new()) {
-                            println!("Checks out!");
-                        } else {
-                            println!("MATCH ERROR! AAAAHHHH!");
-                            continue;
+                        match pattern::verify(&i, &mut env) {
+                            Ok(()) => println!("Checks out!"),
+                            Err(e) => {
+                                println!("Match error {:?}", e);
+                                for i in e.error() {
+                                    context.write_error(i).unwrap();
+                                }
+                                continue
+                            },
                         }
                         match e.eval(i) {
                             Ok(Value::Nil) => (),
                             Ok(x) => println!("{}", x),
                             Err(e) => {
+                                println!("Runtime error!");
                                 let message = match e.val {
                                     ErrorType::MatchError => "Match failed".to_string(),
                                     ErrorType::NotFound(s) => format!(

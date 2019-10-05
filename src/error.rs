@@ -1,4 +1,5 @@
 use crate::parse::Rule;
+use crate::ast::files;
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::{emit, Config};
@@ -82,14 +83,13 @@ impl Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct ErrorContext {
-    files: Files,
+    // files: Files,
     writer: RefCell<termcolor::StandardStream>,
     config: Config,
 }
 impl ErrorContext {
     pub fn new() -> Self {
         ErrorContext {
-            files: Files::new(),
             writer: RefCell::new(termcolor::StandardStream::stderr(
                 termcolor::ColorChoice::Always,
             )),
@@ -97,13 +97,13 @@ impl ErrorContext {
         }
     }
     pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
-        self.files.add(name, source)
+        files.write().unwrap().add(name, source)
     }
     pub fn write_error(&self, error: Error) -> std::io::Result<()> {
         emit(
             &mut *self.writer.borrow_mut(),
             &self.config,
-            &self.files,
+            &files.read().unwrap(),
             &error.0,
         )
     }

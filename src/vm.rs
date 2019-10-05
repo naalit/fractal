@@ -2,20 +2,12 @@
 //! So, there aren't any tests, and it's not well written
 
 use crate::ast::*;
+use crate::builtin::*;
+use crate::parse::intern;
 use crate::pattern::*;
 use codespan::{FileId, Span};
 use std::rc::Rc;
 use string_interner::Sym;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Builtin {
-    Print,
-    Sqr,
-    Add,
-    Sub,
-    Mul,
-    Div,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -38,6 +30,7 @@ impl Typeable for Value {
                 }
                 Builtin::Sqr => Type::Fun(Box::new(Type::Num)),
                 Builtin::Print => Type::Fun(Box::new(Type::None)),
+                Builtin::Num => Type::None,
             },
             Value::Partial(a, _) => match a.ty(env) {
                 Type::Fun(x) => *x,
@@ -87,66 +80,51 @@ pub enum ErrorType {
 }
 
 impl EvalContext {
-    pub fn new(intern: &crate::parse::Intern) -> Self {
-        let env = vec![("print", Builtin::Print), ("sqr", Builtin::Sqr)]
-            .into_iter()
-            .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), Value::Builtin(b)))
-            .collect();
-        let modules = vec![(
-            Type::Num,
-            vec![
-                ("+", Builtin::Add),
-                ("-", Builtin::Sub),
-                ("*", Builtin::Mul),
-                ("/", Builtin::Div),
-            ]
-            .into_iter()
-            .map(|(a, b)| (intern.borrow_mut().get_or_intern(a), Value::Builtin(b)))
-            .collect(),
-        )]
-        .into_iter()
-        .collect();
-        EvalContext {
-            env: Env { env, modules },
-        }
+    pub fn new() -> Self {
+        let env = values();
+        EvalContext { env }
     }
 
     /// Run the tree-walking interpreter on `node`
-    pub fn eval(&mut self, node: Node) -> Result<Value, EvalError> {
+    pub fn eval(&mut self, node: BTerm) -> Result<Value, EvalError> {
         let Node { span, file, val } = node;
-        match val {
+        match &*val {
             Term::Dot(a, s) => {
                 let ty = a.ty_once(&self.env);
                 match self.env.modules.get(&ty).and_then(|x| x.get(&s)) {
                     Some(x) => Ok(Value::Partial(
                         Box::new(x.clone()),
-                        Box::new(self.eval(*a)?),
+                        Box::new(self.eval(a.clone())?),
                     )),
-                    None => Err(EvalError::new(span, file, ErrorType::MemberNotFound(ty, s))),
+                    None => Err(EvalError::new(
+                        span,
+                        file,
+                        ErrorType::MemberNotFound(ty, *s),
+                    )),
                 }
             }
-            Term::Var(s) | Term::Rec(s) => match self.env.get(s) {
+            Term::Var(s) | Term::Rec(s) => match self.env.get(*s) {
                 Some(v) => Ok(v.clone()),
-                None => Err(EvalError::new(span, file, ErrorType::NotFound(s))),
+                None => Err(EvalError::new(span, file, ErrorType::NotFound(*s))),
             },
-            Term::Int(i) => Ok(Value::Int(i)),
-            Term::Float(f) => Ok(Value::Float(f)),
-            Term::Def(s, v) => match s.val {
+            Term::Int(i) => Ok(Value::Int(*i)),
+            Term::Float(f) => Ok(Value::Float(*f)),
+            Term::Def(s, v) => match &*s.val {
                 Term::Var(s) => {
-                    let v = self.eval(*v)?;
-                    self.env.insert(s, v);
+                    let v = self.eval(v.clone())?;
+                    self.env.insert(*s, v);
                     Ok(Value::Nil)
                 }
                 _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
             },
             Term::Tuple(a, b) => {
-                let a = self.eval(*a)?;
-                let b = self.eval(*b)?;
+                let a = self.eval(a.clone())?;
+                let b = self.eval(b.clone())?;
                 Ok(Value::Tuple(Box::new(a), Box::new(b)))
             }
-            Term::App(a, b) => match self.eval(*a)? {
+            Term::App(a, b) => match self.eval(a.clone())? {
                 Value::Fun(arms) => {
-                    let b = self.eval(*b)?;
+                    let b = self.eval(b.clone())?;
                     let arm = arms
                         .iter()
                         .map(|x| (&x.rhs, x.lhs.match_strict(&b)))
@@ -172,23 +150,23 @@ impl EvalContext {
                     }
                 }
                 Value::Builtin(Builtin::Print) => {
-                    println!("{}", self.eval(*b)?);
+                    println!("{}", self.eval(b.clone())?);
                     Ok(Value::Nil)
                 }
-                Value::Builtin(Builtin::Sqr) => match self.eval(*b)? {
+                Value::Builtin(Builtin::Sqr) => match self.eval(b.clone())? {
                     Value::Int(i) => Ok(Value::Int(i * i)),
                     Value::Float(f) => Ok(Value::Float(f * f)),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 },
-                Value::Partial(f, a) => self.builtin_partial(span, file, *f, *a, *b),
+                Value::Partial(f, a) => self.builtin_partial(span, file, *f, *a, b.clone()),
                 _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
             },
-            Term::Fun(f) => Ok(Value::Fun(Rc::new(f))),
+            Term::Fun(f) => Ok(Value::Fun(Rc::new(f.clone()))),
             Term::Block(v) => {
                 let old = self.env.clone();
                 let mut last = Value::Nil;
                 for i in v {
-                    last = self.eval(i)?;
+                    last = self.eval(i.clone())?;
                 }
                 self.env = old;
                 Ok(last)
@@ -206,7 +184,7 @@ impl EvalContext {
         file: FileId,
         f: Value,
         a: Value,
-        b: Node,
+        b: BTerm,
     ) -> Result<Value, EvalError> {
         match f {
             Value::Builtin(Builtin::Add) => {
