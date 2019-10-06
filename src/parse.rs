@@ -1,22 +1,12 @@
-#![allow(non_upper_case_globals)]
-
 use crate::ast::*;
+use crate::common::*;
 use crate::error::*;
 use codespan::FileId;
 use codespan::Span;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
-use std::sync::RwLock;
-use string_interner::{StringInterner, Sym};
-use lazy_static::lazy_static;
 use std::rc::Rc;
-
-pub type Intern = RwLock<StringInterner<Sym>>;
-
-lazy_static! {
-    pub static ref intern: Intern = RwLock::new(StringInterner::new());
-}
 
 #[derive(Parser)]
 #[grammar = "fractal.pest"]
@@ -78,11 +68,7 @@ pub fn parse_str(
     }
 }
 
-fn parse_fun(
-    file: FileId,
-    context: &ErrorContext,
-    tree: Pairs<Rule>,
-) -> Result<Vec<Fun>> {
+fn parse_fun(file: FileId, context: &ErrorContext, tree: Pairs<Rule>) -> Result<Vec<Fun>> {
     let mut v = Vec::new();
     for i in tree.filter(filter_silent) {
         let f = match i.as_rule() {
@@ -104,11 +90,7 @@ fn parse_fun(
     Ok(v)
 }
 
-fn parse_line(
-    file: FileId,
-    context: &ErrorContext,
-    p: Pair<Rule>,
-) -> Result<BTerm> {
+fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTerm> {
     let infix = |lhs: Result<BTerm>, op: Pair<Rule>, rhs: Result<BTerm>| -> Result<BTerm> {
         let lhs = lhs?;
         let rhs = rhs?;
@@ -133,7 +115,7 @@ fn parse_line(
             }
             Rule::app => Term::App(lhs, rhs),
             Rule::var | Rule::sym => {
-                let sym = intern.write().unwrap().get_or_intern(op.as_str().trim());
+                let sym = INTERN.write().unwrap().get_or_intern(op.as_str().trim());
                 let span = lhs.span.merge(pest_span(op.as_span()));
                 Term::App(
                     Node {
@@ -146,29 +128,33 @@ fn parse_line(
             }
             x => panic!("Unknown op {:?}", x),
         };
-        Ok(Node { file, span, val: Rc::new(val) })
+        Ok(Node {
+            file,
+            span,
+            val: Rc::new(val),
+        })
     };
     let span = pest_span(p.as_span());
     let val = match p.as_rule() {
-        Rule::nil => Term::Nil,
+        Rule::nil => Term::Lit(Literal::Nil),
         Rule::num => {
             let s = p.as_str().trim();
             if let Ok(i) = s.parse::<i32>() {
-                Term::Int(i)
+                Term::Lit(Literal::Int(i))
             } else if let Ok(f) = s.parse::<f32>() {
-                Term::Float(f)
+                Term::Lit(Literal::Float(f))
             } else {
                 panic!("We can't parse something that matched the 'num' rule!")
             }
         }
         // Remove the 'rec' keyword, but don't bother recursing; we know there's a 'var' in there.
         Rule::rec => Term::Rec(
-            intern
+            INTERN
                 .write()
                 .unwrap()
                 .get_or_intern(p.as_str().trim()[3..].trim()),
         ),
-        Rule::var | Rule::sym => Term::Var(intern.write().unwrap().get_or_intern(p.as_str())),
+        Rule::var | Rule::sym => Term::Var(INTERN.write().unwrap().get_or_intern(p.as_str())),
         Rule::fun => {
             let arms = parse_fun(file, context, p.into_inner())?;
             Term::Fun(arms)
@@ -197,24 +183,27 @@ fn parse_line(
             let climber = PrecClimber::new(ops);
             // The '.val' here is a little annoying - we're taking a node, taking out the term, and converting it back to a node
             // However, I don't know that there's really a better way
-            Rc::try_unwrap(climber
-                .climb(
-                    p.into_inner().filter(filter_silent),
-                    |x| parse_line(file, context, x),
-                    infix,
-                )?
-                .val).unwrap()
+            Rc::try_unwrap(
+                climber
+                    .climb(
+                        p.into_inner().filter(filter_silent),
+                        |x| parse_line(file, context, x),
+                        infix,
+                    )?
+                    .val,
+            )
+            .unwrap()
         }
         x => panic!("Unknown primary rule {:?}", x),
     };
-    Ok(Node { file, span, val: Rc::new(val) })
+    Ok(Node {
+        file,
+        span,
+        val: Rc::new(val),
+    })
 }
 
-pub fn pest_to_ast(
-    file: FileId,
-    context: &ErrorContext,
-    tree: Pairs<Rule>,
-) -> Result<Vec<BTerm>> {
+pub fn pest_to_ast(file: FileId, context: &ErrorContext, tree: Pairs<Rule>) -> Result<Vec<BTerm>> {
     let mut v = Vec::new();
     for i in tree.filter(filter_silent) {
         let x = parse_line(file, context, i)?;
@@ -277,7 +266,7 @@ mod tests {
             "#) => {
                 x => Term::Def(z,f),
                 z => Term::Var(_),
-                f => Term::Int(5)
+                f => Term::Lit(Literal::Int(5))
             }
         }
     }
@@ -312,10 +301,10 @@ mod tests {
                 b2 => Term::Block(v2),
                 v2[0] => Term::Def(y,two),
                 y => Term::Var(_),
-                two => Term::Int(2),
+                two => Term::Lit(Literal::Int(2)),
                 v[1] => Term::Def(y,three),
                 y => Term::Var(_),
-                three => Term::Int(3)
+                three => Term::Lit(Literal::Int(3))
             }
         }
     }
@@ -344,8 +333,8 @@ mod tests {
                 x => Term::Def(a,x),
                 x => Term::App(x,four),
                 x => Term::Dot(two,_),
-                four => Term::Int(4),
-                two => Term::Int(2),
+                four => Term::Lit(Literal::Int(4)),
+                two => Term::Lit(Literal::Int(2)),
                 a => Term::Var(_)
             }
         }
@@ -358,11 +347,11 @@ mod tests {
                 x => Term::App(f2p, f3),
                 f3 => Term::App(f, three),
                 f => Term::Var(_),
-                three => Term::Int(3),
+                three => Term::Lit(Literal::Int(3)),
                 f2p => Term::Dot(f2, _),
                 f2 => Term::App(f, two),
                 f => Term::Var(_),
-                two => Term::Int(2)
+                two => Term::Lit(Literal::Int(2))
             }
         }
     }

@@ -3,26 +3,32 @@
 
 use crate::ast::*;
 use crate::builtin::*;
-use crate::parse::intern;
+use crate::common::*;
 use crate::pattern::*;
 use codespan::{FileId, Span};
 use std::rc::Rc;
-use string_interner::Sym;
 
+/// A runtime value, a subset of terms
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Fun(Rc<Vec<Fun>>),
-    Int(i32),
-    Float(f32),
+    Lit(Literal),
     Partial(Box<Value>, Box<Value>),
     Tuple(Box<Value>, Box<Value>),
     Builtin(Builtin),
-    Nil,
+}
+impl Match for Value {
+    fn match_strict(&self, other: &Value, env: &Env<impl Match>) -> MatchResult {
+        MatchResult::Fail
+    }
+}
+impl Value {
+    pub const Nil: Value = Value::Lit(Literal::Nil);
 }
 impl Typeable for Value {
     fn ty(&self, env: &Env<impl Typeable>) -> Type {
         match self {
-            Value::Int(_) | Value::Float(_) => Type::Num,
+            Value::Lit(Literal::Int(_)) | Value::Lit(Literal::Float(_)) => Type::Num,
             Value::Tuple(a, b) => Type::Tuple(Box::new(a.ty(env)), Box::new(b.ty(env))),
             Value::Builtin(b) => match b {
                 Builtin::Add | Builtin::Div | Builtin::Mul | Builtin::Sub => {
@@ -45,12 +51,10 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Fun(_) => write!(f, "<function>"),
-            Value::Int(i) => write!(f, "{}", i),
-            Value::Float(i) => write!(f, "{}", i),
+            Value::Lit(i) => write!(f, "{}", i),
             Value::Tuple(a, b) => write!(f, "({}, {})", a, b),
             Value::Builtin(b) => write!(f, "{:?}", b),
             Value::Partial(a, b) => write!(f, "{}({})", a, b),
-            Value::Nil => write!(f, "nil"),
         }
     }
 }
@@ -107,15 +111,13 @@ impl EvalContext {
                 Some(v) => Ok(v.clone()),
                 None => Err(EvalError::new(span, file, ErrorType::NotFound(*s))),
             },
-            Term::Int(i) => Ok(Value::Int(*i)),
-            Term::Float(f) => Ok(Value::Float(*f)),
-            Term::Def(s, v) => match &*s.val {
-                Term::Var(s) => {
-                    let v = self.eval(v.clone())?;
-                    self.env.insert(*s, v);
+            Term::Lit(i) => Ok(Value::Lit(*i)),
+            Term::Def(s, v) => match s.match_strict(&self.eval(v.clone())?, &self.env) {
+                MatchResult::Pass(v) => {
+                    self.env.env.extend(v);
                     Ok(Value::Nil)
                 }
-                _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
             },
             Term::Tuple(a, b) => {
                 let a = self.eval(a.clone())?;
@@ -127,7 +129,7 @@ impl EvalContext {
                     let b = self.eval(b.clone())?;
                     let arm = arms
                         .iter()
-                        .map(|x| (&x.rhs, x.lhs.match_strict(&b)))
+                        .map(|x| (&x.rhs, x.lhs.match_strict(&b, &self.env)))
                         .find(|(_, m)| m.is_pass());
                     match arm {
                         Some((body, MatchResult::Pass(sub))) => {
@@ -154,8 +156,8 @@ impl EvalContext {
                     Ok(Value::Nil)
                 }
                 Value::Builtin(Builtin::Sqr) => match self.eval(b.clone())? {
-                    Value::Int(i) => Ok(Value::Int(i * i)),
-                    Value::Float(f) => Ok(Value::Float(f * f)),
+                    Value::Lit(Literal::Int(i)) => Ok(Value::Lit(Literal::Int(i * i))),
+                    Value::Lit(Literal::Float(f)) => Ok(Value::Lit(Literal::Float(f * f))),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
                 },
                 Value::Partial(f, a) => self.builtin_partial(span, file, *f, *a, b.clone()),
@@ -171,7 +173,6 @@ impl EvalContext {
                 self.env = old;
                 Ok(last)
             }
-            Term::Nil => Ok(Value::Nil),
             _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
         }
     }
@@ -186,40 +187,34 @@ impl EvalContext {
         a: Value,
         b: BTerm,
     ) -> Result<Value, EvalError> {
-        match f {
-            Value::Builtin(Builtin::Add) => {
-                let b = self.eval(b)?;
-                match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-                    (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        let b = self.eval(b)?;
+        if let (Value::Lit(a), Value::Lit(b)) = (a, b) {
+            let l = match f {
+                Value::Builtin(Builtin::Add) => match (a, b) {
+                    (Literal::Int(a), Literal::Int(b)) => Ok(Literal::Int(a + b)),
+                    (Literal::Float(a), Literal::Float(b)) => Ok(Literal::Float(a + b)),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
-                }
-            }
-            Value::Builtin(Builtin::Sub) => {
-                let b = self.eval(b)?;
-                match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-                    (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+                },
+                Value::Builtin(Builtin::Sub) => match (a, b) {
+                    (Literal::Int(a), Literal::Int(b)) => Ok(Literal::Int(a - b)),
+                    (Literal::Float(a), Literal::Float(b)) => Ok(Literal::Float(a - b)),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
-                }
-            }
-            Value::Builtin(Builtin::Mul) => {
-                let b = self.eval(b)?;
-                match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-                    (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+                },
+                Value::Builtin(Builtin::Mul) => match (a, b) {
+                    (Literal::Int(a), Literal::Int(b)) => Ok(Literal::Int(a * b)),
+                    (Literal::Float(a), Literal::Float(b)) => Ok(Literal::Float(a * b)),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
-                }
-            }
-            Value::Builtin(Builtin::Div) => {
-                let b = self.eval(b)?;
-                match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
-                    (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                },
+                Value::Builtin(Builtin::Div) => match (a, b) {
+                    (Literal::Int(a), Literal::Int(b)) => Ok(Literal::Int(a / b)),
+                    (Literal::Float(a), Literal::Float(b)) => Ok(Literal::Float(a / b)),
                     _ => Err(EvalError::new(span, file, ErrorType::MatchError)),
-                }
-            }
-            _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+                },
+                _ => Err(EvalError::new(span, file, ErrorType::UnImplemented)),
+            }?;
+            Ok(Value::Lit(l))
+        } else {
+            Err(EvalError::new(span, file, ErrorType::UnImplemented))
         }
     }
 }

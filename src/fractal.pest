@@ -1,6 +1,6 @@
 keyword = @{ "fun" | "do" | "rec" }
 num = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
-var = @{ !num ~ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ (ASCII_ALPHANUMERIC | "_")+ }
+var = @{ !num ~ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'")+ }
 sym = @{ (!(ASCII_ALPHANUMERIC | WHITESPACE | "(" | ")" | "\n" | "_"  | "." | "|" | "," | "=" | ":" | "$") ~ ANY)+ }
 nil = { "(" ~ ")" }
 rec = { "rec" ~ var }

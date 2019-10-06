@@ -1,9 +1,6 @@
-use crate::ast::{Env,Type,Node};
-use crate::pattern::{BTotal,Total};
-use crate::vm::Value;
-use crate::parse::intern;
-
-use std::rc::Rc;
+use crate::ast::{Env, Type};
+use crate::common::*;
+use crate::pattern::{BTotal, Total};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Builtin {
@@ -18,11 +15,15 @@ pub enum Builtin {
 }
 
 pub fn values() -> Env<Value> {
-    let mut intern_w = intern.write().unwrap();
-    let env = vec![("print", Builtin::Print), ("sqr", Builtin::Sqr), ("num", Builtin::Num)]
-        .into_iter()
-        .map(|(a, b)| (intern_w.get_or_intern(a), Value::Builtin(b)))
-        .collect();
+    let mut intern_w = INTERN.write().unwrap();
+    let env = vec![
+        ("print", Builtin::Print),
+        ("sqr", Builtin::Sqr),
+        ("num", Builtin::Num),
+    ]
+    .into_iter()
+    .map(|(a, b)| (intern_w.get_or_intern(a), Value::Builtin(b)))
+    .collect();
     let modules = vec![(
         Type::Num,
         vec![
@@ -37,20 +38,27 @@ pub fn values() -> Env<Value> {
     )]
     .into_iter()
     .collect();
-    Env {
-        env,
-        modules,
-    }
+    Env { env, modules }
 }
 
 pub fn totals() -> Env<BTotal> {
-    let mut intern_w = intern.write().unwrap();
-    let tfun = Node::new_raw(Total::Fun(vec![(Node::new_raw(Total::Num), Node::new_raw(Total::Num))]));
-    let t_nu = Node::new_raw(Total::Fun(vec![(Node::new_raw(Total::Num), Node::new_raw(Total::Unit(Value::Nil)))]));
-    let env = vec![("print", t_nu.clone()), ("sqr", tfun.clone()), ("num", Node::new_raw(Total::Num))]
-        .into_iter()
-        .map(|(a, b)| (intern_w.get_or_intern(a), b))
-        .collect();
+    let mut intern_w = INTERN.write().unwrap();
+    let tfun = Node::new_raw(Total::Fun(vec![(
+        Node::new_raw(Total::Num),
+        Node::new_raw(Total::Num),
+    )]));
+    let t_nu = Node::new_raw(Total::Fun(vec![(
+        Node::new_raw(Total::Num),
+        Node::new_raw(Total::Lit(Literal::Nil)),
+    )]));
+    let env = vec![
+        ("print", t_nu.clone()),
+        ("sqr", tfun.clone()),
+        ("num", Node::new_raw(Total::Num)),
+    ]
+    .into_iter()
+    .map(|(a, b)| (intern_w.get_or_intern(a), b))
+    .collect();
     let modules = vec![(
         Type::Num,
         vec![
@@ -65,8 +73,5 @@ pub fn totals() -> Env<BTotal> {
     )]
     .into_iter()
     .collect();
-    Env {
-        env,
-        modules,
-    }
+    Env { env, modules }
 }

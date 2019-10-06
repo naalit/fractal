@@ -1,6 +1,6 @@
+use crate::common::*;
 use crate::parse::Rule;
-use crate::ast::files;
-use codespan::{FileId, Files, Span};
+use codespan::{FileId, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::{emit, Config};
 use pest::error::InputLocation;
@@ -97,13 +97,13 @@ impl ErrorContext {
         }
     }
     pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
-        files.write().unwrap().add(name, source)
+        FILES.write().unwrap().add(name, source)
     }
     pub fn write_error(&self, error: Error) -> std::io::Result<()> {
         emit(
             &mut *self.writer.borrow_mut(),
             &self.config,
-            &files.read().unwrap(),
+            &FILES.read().unwrap(),
             &error.0,
         )
     }

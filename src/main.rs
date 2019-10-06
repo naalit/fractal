@@ -1,9 +1,11 @@
 mod ast;
+mod builtin;
+mod common;
 mod error;
 mod parse;
 mod pattern;
 mod vm;
-mod builtin;
+use common::*;
 use error::ErrorContext;
 use std::io::Read;
 use std::io::Write;
@@ -34,7 +36,7 @@ fn main() {
             Ok(result) => {
                 for i in result {
                     if verbose {
-                        println!("{}", i.format());
+                        println!("{}", i);
                     }
                     match pattern::verify(&i, &mut env) {
                         Ok(()) if verbose => println!("Checks out!"),
@@ -43,11 +45,11 @@ fn main() {
                             for i in e.error() {
                                 context.write_error(i).unwrap();
                             }
-                            continue
-                        },
+                            continue;
+                        }
                     }
                     match e.eval(i) {
-                        Ok(Value::Nil) => (),
+                        Ok(Value::Lit(Literal::Nil)) => (),
                         Ok(x) => println!("{}", x),
                         Err(e) => {
                             println!("Runtime error!");
@@ -107,7 +109,7 @@ fn main() {
                 Ok(result) => {
                     for i in result {
                         if verbose {
-                            println!("{}", i.format());
+                            println!("{}", i);
                         }
                         match pattern::verify(&i, &mut env) {
                             Ok(()) => println!("Checks out!"),
@@ -116,11 +118,11 @@ fn main() {
                                 for i in e.error() {
                                     context.write_error(i).unwrap();
                                 }
-                                continue
-                            },
+                                continue;
+                            }
                         }
                         match e.eval(i) {
-                            Ok(Value::Nil) => (),
+                            Ok(Value::Lit(Literal::Nil)) => (),
                             Ok(x) => println!("{}", x),
                             Err(e) => {
                                 println!("Runtime error!");

@@ -1,15 +1,6 @@
+use crate::common::*;
 use std::collections::HashMap;
-use string_interner::Sym;
-use crate::parse::intern;
 use std::rc::Rc;
-use std::sync::RwLock;
-use lazy_static::lazy_static;
-
-lazy_static! {
-    pub static ref files: RwLock<codespan::Files> = RwLock::new(codespan::Files::new());
-    /// Used for empty spans
-    pub static ref no_file: codespan::FileId = files.write().unwrap().add("<builtin>", "");
-}
 
 /// An AST node, with error reporting information attached
 /// Note that the Clone implementation is a shallow clone, it has an Rc inside
@@ -25,7 +16,7 @@ impl<T> Node<T> {
     pub fn new_raw(val: T) -> Node<T> {
         Node {
             span: codespan::Span::default(),
-            file: *no_file,
+            file: *NO_FILE,
             val: Rc::new(val),
         }
     }
@@ -38,50 +29,40 @@ impl<T> Node<T> {
     }
 }
 
-impl Node<Term> {
-    /// TODO refactor into a display impl
-    pub fn format(&self) -> String {
-        match &*self.val {
-            Term::Nil => "()".to_string(),
-            Term::Rec(s) => format!("rec {}", intern.read().unwrap().resolve(*s).unwrap()),
-            Term::Var(s) => intern.read().unwrap().resolve(*s).unwrap().to_string(),
-            Term::Int(i) => i.to_string(),
-            Term::Float(f) => f.to_string(),
-            Term::Tuple(a, b) => format!("{}, {}", a.format(), b.format()).to_string(),
-            Term::Union(a, b) => format!("{} | {}", a.format(), b.format()).to_string(),
-            Term::Inter(a, b) => format!("{} : {}", a.format(), b.format()).to_string(),
-            Term::Dot(a, s) => format!(
-                "{}.{}",
-                a.format(),
-                intern.read().unwrap().resolve(*s).unwrap()
-            )
-            .to_string(),
+impl std::fmt::Display for Node<Term> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match &**self {
+            Term::Lit(l) => l.fmt(f),
+            Term::Rec(s) => write!(f, "rec {}", INTERN.read().unwrap().resolve(*s).unwrap()),
+            Term::Var(s) => f.write_str(INTERN.read().unwrap().resolve(*s).unwrap()),
+            Term::Tuple(a, b) => write!(f, "{}, {}", a, b),
+            Term::Union(a, b) => write!(f, "{} | {}", a, b),
+            Term::Inter(a, b) => write!(f, "{} : {}", a, b),
+            Term::Dot(a, s) => write!(f, "{}.{}", a, INTERN.read().unwrap().resolve(*s).unwrap()),
             Term::Block(v) => {
-                let mut s = String::from("do");
+                f.write_str("do")?;
                 for i in v {
                     // TODO make indentation work in nested blocks
-                    s.push_str("\n");
+                    f.write_str("\n")?;
                     // TODO fix indentation
-                    s.push_str(&format!("{:indent$}{}", "", i.format(), indent=2));
+                    f.write_fmt(format_args!("{:indent$}{}", "", i, indent = 2))?;
                 }
-                s
+                Ok(())
             }
-            Term::App(a, b) => format!("{}({})", a.format(), b.format()).to_string(),
+            Term::App(a, b) => write!(f, "{}({})", a, b),
             Term::Fun(v) => {
-                let mut s = String::from("fun");
+                f.write_str("fun");
                 for i in v {
                     // TODO make indentation work in nested blocks
-                    s.push_str("\n");
-                    s.push_str(&format!("{:indent$}{}", "", i.lhs.format(), indent=2));
-                    s.push_str(" => ");
-                    s.push_str(format!("{:indent$}{}", "", i.rhs.format(), indent=2).trim());
+                    write!(f, "\n{:indent$}{} => {}", "", i.lhs, i.rhs, indent = 2)?;
                 }
-                s
+                Ok(())
             }
-            Term::Def(a, b) => format!("{} = {}", a.format(), b.format()).to_string(),
+            Term::Def(a, b) => write!(f, "{} = {}", a, b),
         }
     }
 }
+
 impl<T> std::ops::Deref for Node<T> {
     type Target = T;
     fn deref(&self) -> &T {
@@ -149,7 +130,7 @@ impl Typeable for Term {
                 .and_then(|m| m.get(s))
                 .map(|x| x.ty_once(env))
                 .unwrap_or(Type::None),
-            Term::Int(_) | Term::Float(_) => Type::Num,
+            Term::Lit(Literal::Int(_)) | Term::Lit(Literal::Float(_)) => Type::Num,
             Term::Tuple(a, b) => Type::Tuple(Box::new(a.ty_once(env)), Box::new(b.ty_once(env))),
             Term::App(a, _b) => match a.ty_once(env) {
                 Type::Fun(x) => *x,
@@ -172,7 +153,7 @@ impl Typeable for Term {
                     .map(|x| x.ty(env))
                     .unwrap_or(Type::None),
             },
-            Term::Int(_) | Term::Float(_) => Type::Num,
+            Term::Lit(Literal::Int(_)) | Term::Lit(Literal::Float(_)) => Type::Num,
             Term::Tuple(a, b) => Type::Tuple(Box::new(a.ty(env)), Box::new(b.ty(env))),
             Term::App(a, _b) => match a.ty(env) {
                 Type::Fun(x) => *x,
@@ -208,14 +189,29 @@ pub fn type_fun(x: &[Fun], env: &Env<impl Typeable>) -> Type {
 
 pub type BTerm = Node<Term>;
 
-/// The actual thing that's inside a `Node`
-#[derive(Debug, PartialEq, Clone)]
-pub enum Term {
-    Nil,
-    Rec(Sym),
-    Var(Sym),
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum Literal {
     Int(i32),
     Float(f32),
+    Nil,
+}
+
+impl std::fmt::Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Literal::Int(i) => f.write_fmt(format_args!("{}", i)),
+            Literal::Float(i) => f.write_fmt(format_args!("{}", i)),
+            Literal::Nil => f.write_str("()"),
+        }
+    }
+}
+
+/// A term, the entire language is representable
+#[derive(Debug, PartialEq, Clone)]
+pub enum Term {
+    Lit(Literal),
+    Rec(Sym),
+    Var(Sym),
     Tuple(BTerm, BTerm),
     Union(BTerm, BTerm),
     /// The Intersection of two patterns - represented with `:`
@@ -225,21 +221,6 @@ pub enum Term {
     App(BTerm, BTerm),
     Fun(Vec<Fun>),
     Def(BTerm, BTerm),
-}
-
-use crate::vm::Value;
-
-impl Term {
-    /// If this term is just a value, return that value
-    pub fn simple(&self) -> Option<Value> {
-        match self {
-            Term::Nil => Some(Value::Nil),
-            Term::Int(i) => Some(Value::Int(*i)),
-            Term::Float(f) => Some(Value::Float(*f)),
-            Term::Tuple(x, y) => Some(Value::Tuple(Box::new(x.simple()?), Box::new(y.simple()?))),
-            _ => None,
-        }
-    }
 }
 
 /// Represents a match arm in a `fun`
