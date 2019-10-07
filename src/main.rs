@@ -13,7 +13,6 @@ use vm::*;
 
 fn main() {
     let mut context = ErrorContext::new();
-    let intern = std::cell::RefCell::new(string_interner::StringInterner::new());
     let mut e = EvalContext::new();
     let mut i = 0;
     let mut buf = String::new();
@@ -56,11 +55,11 @@ fn main() {
                             let message = match e.val {
                                 ErrorType::MatchError => "Match failed".to_string(),
                                 ErrorType::NotFound(s) => {
-                                    format!("Not found: '{}'", intern.borrow().resolve(s).unwrap())
+                                    format!("Not found: '{}'", INTERN.read().unwrap().resolve(s).unwrap())
                                 }
                                 ErrorType::MemberNotFound(ty, s) => format!(
                                     "Not found: member '{}' of {:?}",
-                                    intern.borrow().resolve(s).unwrap(),
+                                    INTERN.read().unwrap().resolve(s).unwrap(),
                                     ty
                                 ),
                                 ErrorType::UnImplemented => "Feature not implemented".to_string(),
@@ -130,11 +129,11 @@ fn main() {
                                     ErrorType::MatchError => "Match failed".to_string(),
                                     ErrorType::NotFound(s) => format!(
                                         "Not found: '{}'",
-                                        intern.borrow().resolve(s).unwrap()
+                                        INTERN.read().unwrap().resolve(s).unwrap()
                                     ),
                                     ErrorType::MemberNotFound(ty, s) => format!(
                                         "Not found: member '{}' of {:?}",
-                                        intern.borrow().resolve(s).unwrap(),
+                                        INTERN.read().unwrap().resolve(s).unwrap(),
                                         ty
                                     ),
                                     ErrorType::UnImplemented => {
