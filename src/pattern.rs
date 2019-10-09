@@ -243,7 +243,6 @@ impl BTotal {
 
     pub fn will_match(&self, other: &BTotal) -> WillMatch {
         match (&**self, &**other) {
-            (Total::Builtin(Builtin::Num), _) => self.replace(Total::Num).will_match(other),
             (_, Total::Builtin(x)) => self.will_match(&other.replace(x.total())),
             (Total::Num, Total::Num) => Ok(vec![]),
             (Total::Num, Total::Lit(Literal::Int(_))) => Ok(vec![]),
@@ -268,6 +267,7 @@ impl BTotal {
                 },
             },
             (Total::Defined(_, t), _) => t.will_match(other),
+            (_, Total::Defined(_, t)) => self.will_match(t),
             _ => Err(MatchError::Pat(self.clone(), other.clone())),
         }
     }
