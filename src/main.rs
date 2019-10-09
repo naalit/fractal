@@ -4,16 +4,13 @@ mod common;
 mod error;
 mod parse;
 mod pattern;
-mod vm;
 use common::*;
 use error::ErrorContext;
 use std::io::Read;
 use std::io::Write;
-use vm::*;
 
 fn main() {
     let mut context = ErrorContext::new();
-    let mut e = EvalContext::new();
     let mut i = 0;
     let mut buf = String::new();
 
@@ -37,35 +34,18 @@ fn main() {
                     if verbose {
                         println!("{}", i);
                     }
-                    match pattern::verify(&i, &mut env) {
-                        Ok(()) if verbose => println!("Checks out!"),
-                        Ok(()) => (),
+                    use pattern::HasTotal;
+                    match i.total(&mut env, false) {
+                        Ok(mut x) => {
+                            x.simplify_mut(&env);
+                            println!(": {}", x);
+                            println!("Checks out!");
+                        },
                         Err(e) => {
+                            println!("Match error {:?}", e);
                             for i in e.error() {
                                 context.write_error(i).unwrap();
                             }
-                            continue;
-                        }
-                    }
-                    match e.eval(i) {
-                        Ok(Value::Lit(Literal::Nil)) => (),
-                        Ok(x) => println!("{}", x),
-                        Err(e) => {
-                            println!("Runtime error!");
-                            let message = match e.val {
-                                ErrorType::MatchError => "Match failed".to_string(),
-                                ErrorType::NotFound(s) => {
-                                    format!("Not found: '{}'", INTERN.read().unwrap().resolve(s).unwrap())
-                                }
-                                ErrorType::MemberNotFound(ty, s) => format!(
-                                    "Not found: member '{}' of {:?}",
-                                    INTERN.read().unwrap().resolve(s).unwrap(),
-                                    ty
-                                ),
-                                ErrorType::UnImplemented => "Feature not implemented".to_string(),
-                            };
-                            let error = error::Error::new(e.file, message, e.span, "");
-                            context.write_error(error).unwrap()
                         }
                     }
                 }
@@ -110,38 +90,18 @@ fn main() {
                         if verbose {
                             println!("{}", i);
                         }
-                        match pattern::verify(&i, &mut env) {
-                            Ok(()) => println!("Checks out!"),
+                        use pattern::HasTotal;
+                        match i.total(&mut env, false) {
+                            Ok(mut x) => {
+                                x.simplify_mut(&env);
+                                println!(": {}", x);
+                                println!("Checks out!");
+                            },
                             Err(e) => {
                                 println!("Match error {:?}", e);
                                 for i in e.error() {
                                     context.write_error(i).unwrap();
                                 }
-                                continue;
-                            }
-                        }
-                        match e.eval(i) {
-                            Ok(Value::Lit(Literal::Nil)) => (),
-                            Ok(x) => println!("{}", x),
-                            Err(e) => {
-                                println!("Runtime error!");
-                                let message = match e.val {
-                                    ErrorType::MatchError => "Match failed".to_string(),
-                                    ErrorType::NotFound(s) => format!(
-                                        "Not found: '{}'",
-                                        INTERN.read().unwrap().resolve(s).unwrap()
-                                    ),
-                                    ErrorType::MemberNotFound(ty, s) => format!(
-                                        "Not found: member '{}' of {:?}",
-                                        INTERN.read().unwrap().resolve(s).unwrap(),
-                                        ty
-                                    ),
-                                    ErrorType::UnImplemented => {
-                                        "Feature not implemented".to_string()
-                                    }
-                                };
-                                let error = error::Error::new(e.file, message, e.span, "");
-                                context.write_error(error).unwrap()
                             }
                         }
                     }

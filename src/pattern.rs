@@ -1,3 +1,4 @@
+use crate::builtin::Builtin;
 use crate::ast::*;
 use crate::common::*;
 
@@ -16,9 +17,9 @@ impl MatchError {
         use crate::error::*;
         match self {
             MatchError::Pat(l, r) => {
-                let message = format!("Couldn't match {:?} with {:?}", r, l);
-                let message_r = format!("Matching this: {:?}", r);
-                let message_l = format!("With this: {:?}", l);
+                let message = format!("Couldn't match '{}' with '{}'", r, l);
+                let message_r = format!("Matching this: '{}'", r);
+                let message_l = format!("With this: '{}'", l);
                 vec![
                     Error::new(r.file, &message, r.span, message_r),
                     Error::new(l.file, message, l.span, message_l),
@@ -62,139 +63,30 @@ pub fn and<T>(x: Result<T, MatchError>, y: Result<T, MatchError>) -> Result<(T, 
 }
 
 pub trait HasTotal {
-    fn total(&self, e: &mut Env<BTotal>) -> Result<BTotal, MatchError>;
-}
-impl HasTotal for BTerm {
-    // TODO merge with verify
-    fn total(&self, env: &mut Env<BTotal>) -> Result<BTotal, MatchError> {
-        let Node { span, file, .. } = self;
-        let t = match &**self {
-            Term::Lit(l) => Ok(Total::Lit(*l)),
-            Term::Dot(n, s) => match &**n {
-                Term::Lit(Literal::Int(_)) | Term::Lit(Literal::Float(_)) => {
-                    Ok((*env.modules[&Type::Num][s]).clone())
-                }
-                Term::Var(x) => match &**env.get(*x).expect("Not found") {
-                    Total::Num => Ok((*env.modules[&Type::Num][s]).clone()),
-                    Total::Lit(Literal::Int(_)) => Ok((*env.modules[&Type::Num][s]).clone()),
-                    Total::Lit(Literal::Float(_)) => Ok((*env.modules[&Type::Num][s]).clone()),
-                    _ => Err(MatchError::MemberNotFound(n.total(env)?, Node::new(codespan::Span::new(n.span.end(), span.end()), *file, *s))),
-                },
-                _ => Err(MatchError::MemberNotFound(n.total(env)?, Node::new(codespan::Span::new(n.span.end(), span.end()), *file, *s))),
-            },
-            Term::Tuple(x, y) => {
-                let (x, y) = and(x.total(env), y.total(env))?;
-                Ok(Total::Tuple(x, y))
-            },
-            Term::Var(s) => {
-                if let Some(t) = env.get(*s) {
-                    Ok((**t).clone())
-                } else {
-                    Ok(Total::Var(*s))
-                }
-            }
-            Term::App(f, x) => {
-                let x = x.total(env)?;
-                let f = f.total(env)?;
-                match &*f.val {
-                    // TODO check for multiple branches that together provide exhaustiveness
-                    Total::Fun(f) => {
-                        let v: Vec<_> = f
-                            .iter()
-                            .map(|(p, b)| (p.will_match(&x), b))
-                            .collect();
-                        if let Some((_,body)) = v.iter().find(|(p,_)| p.is_ok()) {
-                            Ok((*body.val).clone())
-                        } else {
-                            Err(MatchError::Multi(v.into_iter().filter(|(p,_)| p.is_err()).map(|(p,_)| p.unwrap_err()).collect()))
-                        }
-                    }
-                    _ => Err(MatchError::NotFun(f)),
-                }
-            }
-            Term::Union(x, y) => {
-                let (x, y) = and(x.total(env), y.total(env))?;
-                Ok(Total::Union(x, y))
-            },
-            Term::Fun(v) => {
-                let (ok, err): (Vec<_>, Vec<_>) = v.iter()
-                        .map(|Fun { lhs, rhs }| {
-                            let l = lhs.total(env)?;
-                            let g = l.guaranteed();
-                            // Keep track of what we're adding to the env
-                            let mut old = Vec::new();
-                            let mut remove = Vec::with_capacity(g.len());
-                            for (k, v) in g {
-                                remove.push(k);
-                                if let Some(v) = env.env.insert(k, v) {
-                                    old.push((k, v));
-                                }
-                            }
-                            let r = rhs.total(env)?;
-                            // Put the old env definitions back
-                            for k in remove {
-                                env.env.remove(&k);
-                            }
-                            env.env.extend(old);
-                            Ok((l, r))
-                        }).partition(|x| x.is_ok());
-                if err.is_empty() {
-                    Ok(Total::Fun(ok.into_iter().map(|x| x.unwrap()).collect()))
-                } else {
-                    Err(MatchError::Multi(err.into_iter().map(|x| x.unwrap_err()).collect()))
-                }
-            },
-            Term::Inter(x, y) => {
-                let (x, y) = and(x.total(env), y.total(env))?;
-                Ok(Total::Inter(x, y))
-            },
-            Term::Def(lhs, rhs) => {
-                let (l, r) = and(lhs.total(env), rhs.total(env))?;
-                match l.will_match(&r) {
-                    Ok(v) => {
-                        env.env.extend(v);
-                        Ok(Total::Lit(Literal::Nil))
-                    },
-                    Err(e) => Err(e)
-                }
-            }
-            _ => Err(MatchError::Multi(vec![])),
-        }?;
-        Ok(Node::new(*span, *file, t))
-    }
+    fn total(&self, e: &mut Env<BTotal>, pat: bool) -> Result<BTotal, MatchError>;
 }
 
-impl BTotal {
-    fn free_vars(&self) -> Vec<Node<Sym>> {
-        match &**self {
-            Total::Var(s) => vec![Node::new(self.span, self.file, *s)],
-            Total::Inter(a, b) | Total::Union(a, b) | Total::Tuple(a, b) => merge(a.free_vars(), b.free_vars()),
-            Total::Fun(v) => v.iter().map(|(_,b)| b.free_vars()).flatten().collect(),
-            _ => vec![],
-        }
-    }
+pub trait TotalCompat: Sized {
+    fn to_total(&self) -> Option<BTotal>;
+    fn from_total(t: &BTotal) -> Option<Self>;
 }
 
-pub fn verify(n: &BTerm, env: &mut Env<BTotal>) -> Result<(), MatchError> {
-    match n.total(env) {
-        Ok(x) => {
-            let fv = x.free_vars();
-            if fv.is_empty() {
-                Ok(())
-            } else {
-                Err(MatchError::Multi(fv.into_iter().map(MatchError::NotFound).collect()))
-            }
-        },
-        Err(e) => Err(e),
+impl TotalCompat for BTotal {
+    fn to_total(&self) -> Option<BTotal> {
+        Some(self.clone())
+    }
+    fn from_total(t: &BTotal) -> Option<BTotal> {
+        t.to_total()
     }
 }
 
 /// The set of possible patterns that a value can take
-/// Mostly a subset of terms
-/// It's possible to pattern match exactly using this, but not evaluate a function body
+/// This is the IR that we use for partial evaluation and validation
+/// So it can be used for general evaluation as well
 #[derive(Debug, PartialEq, Clone)]
 pub enum Total {
     Fun(Vec<(BTotal, BTotal)>),
+    Builtin(Builtin),
     Union(BTotal, BTotal),
     Inter(BTotal, BTotal),
     Lit(Literal),
@@ -203,8 +95,34 @@ pub enum Total {
     Rec(usize),
     /// Var() means that this wasn't bound when we created the Total, so it's on the pattern side and needs to be bound or it's invalid
     Var(Sym),
+    /// A variable with a known pattern that can be refined
+    Defined(Sym, BTotal),
     Num,
     Any,
+}
+
+impl std::fmt::Display for BTotal {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match &**self {
+            Total::Any => write!(f, "_"),
+            Total::Num => write!(f, "num"),
+            Total::Defined(s, t) => write!(f, "{}: {}", INTERN.read().unwrap().resolve(*s).unwrap(), t),
+            Total::Var(s) => write!(f, "{}", INTERN.read().unwrap().resolve(*s).unwrap()),
+            Total::Rec(u) => write!(f, "<deprecated Rec {}>", u),
+            Total::Tuple(a, b) => write!(f, "{}, {}", a, b),
+            Total::Inter(a, b) => write!(f, "{} : {}", a, b),
+            Total::Lit(l) => write!(f, "{}", l),
+            Total::Union(a, b) => write!(f, "{} | {}", a, b),
+            Total::Fun(v) => {
+                write!(f, "fun")?;
+                for i in v {
+                    write!(f, "\n  {} => {}", i.0, i.1)?;
+                }
+                writeln!(f)
+            },
+            Total::Builtin(b) => write!(f, "{:?}", b),
+        }
+    }
 }
 
 pub type WillMatch = Result<Vec<(Sym, BTotal)>, MatchError>;
@@ -248,8 +166,85 @@ impl BTotal {
         }
     }
 
+    pub fn simplify_mut(&mut self, env: &Env<BTotal>) {
+        if let Some(a) = self.simplify(env) {
+            *self = a;
+        };
+    }
+
+    pub fn move_env_mut(&mut self) {
+        if let Some(a) = self.move_env() {
+            *self = a;
+        }
+    }
+
+    pub fn move_env(&self) -> Option<BTotal> {
+        let multi =
+            |cons: fn(BTotal, BTotal) -> Total, a: &BTotal, b: &BTotal| match a.move_env() {
+                Some(a) => match b.move_env() {
+                    Some(b) => Some(cons(a, b)),
+                    None => Some(cons(a, b.clone())),
+                },
+                None => match b.move_env() {
+                    Some(b) => Some(cons(a.clone(), b)),
+                    None => None,
+                },
+            };
+
+        let Node { span, file, .. } = self;
+        let (span, file) = (*span, *file);
+
+        let n = match &*self.val {
+            Total::Var(_) => Some(Total::Any),
+            Total::Defined(_, t) => return Some(t.clone()),
+            Total::Inter(a, b) => multi(Total::Inter, a, b),
+            Total::Tuple(a, b) => multi(Total::Tuple, a, b),
+            Total::Union(a, b) => multi(Total::Union, a, b),
+            // TODO fun
+            _ => None,
+        };
+
+        n.map(|x| Node::new(span, file, x))
+    }
+
+    pub fn simplify(&self, env: &Env<BTotal>) -> Option<BTotal> {
+        let multi =
+            |cons: fn(BTotal, BTotal) -> Total, a: &BTotal, b: &BTotal| match a.simplify(env) {
+                Some(a) => match b.simplify(env) {
+                    Some(b) => Some(cons(a, b)),
+                    None => Some(cons(a, b.clone())),
+                },
+                None => match b.simplify(env) {
+                    Some(b) => Some(cons(a.clone(), b)),
+                    None => None,
+                },
+            };
+
+        let Node { span, file, .. } = self;
+        let (span, file) = (*span, *file);
+
+        let n = match &*self.val {
+            Total::Defined(s, t) => match env.get(*s) {
+                Some(u) => {
+                    // assert!(t.will_match(u).is_ok());
+                    Some(Total::Defined(*s, u.clone()))
+                }
+                None => None,
+            },
+            Total::Inter(a, b) => multi(Total::Inter, a, b),
+            Total::Tuple(a, b) => multi(Total::Tuple, a, b),
+            Total::Union(a, b) => multi(Total::Union, a, b),
+            // TODO fun
+            _ => None,
+        };
+
+        n.map(|x| Node::new(span, file, x))
+    }
+
     pub fn will_match(&self, other: &BTotal) -> WillMatch {
         match (&**self, &**other) {
+            (Total::Builtin(Builtin::Num), _) => self.replace(Total::Num).will_match(other),
+            (_, Total::Builtin(x)) => self.will_match(&other.replace(x.total())),
             (Total::Num, Total::Num) => Ok(vec![]),
             (Total::Num, Total::Lit(Literal::Int(_))) => Ok(vec![]),
             (Total::Num, Total::Lit(Literal::Float(_))) => Ok(vec![]),
@@ -272,76 +267,143 @@ impl BTotal {
                     Err(e2) => Err(MatchError::Multi(vec![e, e2])),
                 },
             },
+            (Total::Defined(_, t), _) => t.will_match(other),
             _ => Err(MatchError::Pat(self.clone(), other.clone())),
         }
     }
 }
-
-#[derive(PartialEq, Debug)]
-pub enum MatchResult {
-    Pass(Vec<(Sym, Value)>),
-    Fail,
-}
-impl MatchResult {
-    pub fn is_pass(&self) -> bool {
-        match self {
-            MatchResult::Pass(_) => true,
-            MatchResult::Fail => false,
-        }
-    }
-    pub fn and(self, other: Self) -> Self {
-        match (self, other) {
-            (MatchResult::Pass(mut a), MatchResult::Pass(mut b)) => {
-                a.append(&mut b);
-                MatchResult::Pass(a)
+impl HasTotal for BTerm {
+    // TODO merge with verify
+    fn total(&self, env: &mut Env<BTotal>, pat: bool) -> Result<BTotal, MatchError> {
+        let Node { span, file, .. } = self;
+        let t = match &**self {
+            Term::Lit(l) => Ok(Total::Lit(*l)),
+            Term::Dot(n, s) => Err(MatchError::MemberNotFound(
+                        n.total(env, pat)?,
+                        Node::new(codespan::Span::new(n.span.end(), span.end()), *file, *s),
+                    )),
+            Term::Tuple(x, y) => {
+                let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
+                Ok(Total::Tuple(x, y))
             }
-            _ => MatchResult::Fail,
-        }
-    }
-}
-
-pub trait Match {
-    fn match_strict(&self, other: &Value, env: &Env<impl Match>) -> MatchResult;
-}
-
-// https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/
-// We want pattern matching on floats to work as expected, which means work modulo rounding errors
-// Might be too slow to occur in generated code, especially because this might be to e.g. not divide by zero, where == works fine
-fn roughly_equal_f32(a: f32, b: f32) -> bool {
-    let diff = (a - b).abs();
-    let largest_abs = a.abs().max(b.abs());
-    // Check for absolute epsilon (needed for denormals & zero) and then relative epsilon
-    // We could use ULPs, but that's more annoying and could be slower on some architectures
-    diff <= std::f32::EPSILON || diff <= largest_abs * std::f32::EPSILON
-}
-
-impl Match for Term {
-    fn match_strict(&self, other: &Value, env: &Env<impl Match>) -> MatchResult {
-        match (self, other) {
-            (Term::Lit(l), Value::Lit(l2)) if l == l2 => MatchResult::Pass(Vec::new()),
-            (Term::Var(s), x) if !env.env.contains_key(s) => {
-                MatchResult::Pass(vec![(*s, x.clone())])
-            }
-            (Term::Tuple(a, b), Value::Tuple(a2, b2)) => {
-                if let MatchResult::Pass(mut a) = a.match_strict(a2, env) {
-                    if let MatchResult::Pass(mut b) = b.match_strict(b2, env) {
-                        a.append(&mut b);
-                        return MatchResult::Pass(a);
-                    }
-                }
-                MatchResult::Fail
-            }
-            (Term::Union(a, b), x) => {
-                let a = a.match_strict(x, env);
-                if a.is_pass() {
-                    a
+            Term::Var(s) => {
+                if let Some(t) = env.get(*s) {
+                    Ok(Total::Defined(*s, t.clone()))
+                } else if pat {
+                    Ok(Total::Var(*s))
                 } else {
-                    b.match_strict(x, env)
+                    Err(MatchError::NotFound(Node::new(*span, *file, *s)))
                 }
             }
-            (Term::Inter(a, b), x) => a.match_strict(x, env).and(b.match_strict(x, env)),
-            _ => MatchResult::Fail,
-        }
+            Term::App(f, x) => {
+                let x = x.total(env, pat)?;
+                let mut f = f.total(env, pat)?;
+                if let Total::Defined(_, x) = &*f {
+                    f = x.clone();
+                }
+                match &*f.val {
+                    // TODO check for multiple branches that together provide exhaustiveness
+                    Total::Builtin(b) => b.eval(&x),
+                    Total::Fun(f) => {
+                        let v: Vec<_> = f.iter().map(|(p, b)| (p.will_match(&x), b)).collect();
+                        if let Some((sub, body)) = v.iter().find(|(p, _)| p.is_ok()) {
+                            let mut body = (*body).clone();
+                            let sub = sub.as_ref().unwrap().clone();
+
+                            let mut rem = Vec::new();
+                            let mut old = Vec::new();
+
+                            for (k,v) in sub {
+                                rem.push(k);
+                                if let Some(v) = env.env.insert(k, v) {
+                                    old.push((k,v));
+                                }
+                            }
+
+                            body.simplify_mut(env);
+                            body.move_env_mut();
+
+                            for k in rem {
+                                env.env.remove(&k);
+                            }
+                            for (k,v) in old {
+                                env.env.insert(k, v);
+                            }
+
+                            Ok((*body.val).clone())
+                        } else {
+                            Err(MatchError::Multi(
+                                v.into_iter()
+                                    .filter(|(p, _)| p.is_err())
+                                    .map(|(p, _)| p.unwrap_err())
+                                    .collect(),
+                            ))
+                        }
+                    }
+                    _ => Err(MatchError::NotFun(f)),
+                }
+            }
+            Term::Union(x, y) => {
+                let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
+                Ok(Total::Union(x, y))
+            }
+            Term::Fun(v) => {
+                let (ok, err): (Vec<_>, Vec<_>) = v
+                    .iter()
+                    .map(|Fun { lhs, rhs }| {
+                        let l = lhs.total(env, true)?;
+                        let g = l.guaranteed();
+                        // Keep track of what we're adding to the env
+                        let mut old = Vec::new();
+                        let mut remove = Vec::with_capacity(g.len());
+                        for (k, v) in g {
+                            remove.push(k);
+                            if let Some(v) = env.env.insert(k, v) {
+                                old.push((k, v));
+                            }
+                        }
+                        let r = rhs.total(env, pat)?;
+                        // Put the old env definitions back
+                        for k in remove {
+                            env.env.remove(&k);
+                        }
+                        env.env.extend(old);
+                        Ok((l, r))
+                    })
+                    .partition(|x| x.is_ok());
+                if err.is_empty() {
+                    Ok(Total::Fun(ok.into_iter().map(|x| x.unwrap()).collect()))
+                } else {
+                    Err(MatchError::Multi(
+                        err.into_iter().map(|x| x.unwrap_err()).collect(),
+                    ))
+                }
+            }
+            Term::Inter(x, y) => {
+                let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
+                Ok(Total::Inter(x, y))
+            }
+            Term::Def(lhs, rhs) => {
+                let (l, r) = and(lhs.total(env, true), rhs.total(env, pat))?;
+                match l.will_match(&r) {
+                    Ok(v) => {
+                        env.env.extend(v);
+                        Ok(Total::Lit(Literal::Nil))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Term::Block(v) => {
+                let mut t = Node::new(*span, *file, Total::Lit(Literal::Nil));
+                for i in v {
+                    t = i.total(env, pat)?;
+                }
+                return Ok(t);
+            }
+            // TODO remove rec
+            Term::Rec(_) => Ok(Total::Any),
+        }?;
+        Ok(Node::new(*span, *file, t))
     }
 }
 
@@ -353,10 +415,9 @@ mod tests {
         use string_interner::StringInterner;
         StringInterner::new().get_or_intern("a")
     }
-    fn fresh_env() -> crate::ast::Env<Value> {
+    fn fresh_env() -> crate::ast::Env<Term> {
         crate::ast::Env {
             env: std::collections::HashMap::new(),
-            modules: std::collections::HashMap::new(),
         }
     }
 
@@ -367,10 +428,10 @@ mod tests {
         assert!(Node::new_raw(Total::Var(fresh_var()))
             .will_match(&Node::new_raw(Total::Lit(Literal::Int(3))))
             .is_ok(),);
-        assert_eq!(
-            Term::Var(fresh_var()).match_strict(&Value::Lit(Literal::Int(3)), &env),
-            MatchResult::Pass(vec![(fresh_var(), Value::Lit(Literal::Int(3)))])
-        );
+        // assert_eq!(
+        //     Term::Var(fresh_var()).match_strict(&Value::Lit(Literal::Int(3)), &env),
+        //     MatchResult::Pass(vec![(fresh_var(), Value::Lit(Literal::Int(3)))])
+        // );
     }
 
     #[test]
@@ -380,8 +441,8 @@ mod tests {
         let i = Node::new_raw(Term::Lit(Literal::Int(2)));
         let j = Node::new_raw(Term::Lit(Literal::Int(3)));
 
-        let iv = Box::new(Value::Lit(Literal::Int(2)));
-        let jv = Box::new(Value::Lit(Literal::Int(3)));
+        // let iv = Box::new(Value::Lit(Literal::Int(2)));
+        // let jv = Box::new(Value::Lit(Literal::Int(3)));
         let ir = Node::new_raw(Total::Lit(Literal::Int(2)));
         let jr = Node::new_raw(Total::Lit(Literal::Int(3)));
         let vr = Node::new_raw(Total::Any);
@@ -396,15 +457,15 @@ mod tests {
             .will_match(&Node::new_raw(Total::Tuple(jr.clone(), vr.clone())))
             .is_err());
 
-        assert_eq!(
-            Term::Tuple(i.clone(), j.clone())
-                .match_strict(&Value::Tuple(iv.clone(), jv.clone()), &env),
-            MatchResult::Pass(vec![])
-        );
-        assert_eq!(
-            Term::Tuple(i, j).match_strict(&Value::Tuple(jv, iv), &env),
-            MatchResult::Fail
-        );
+        // assert_eq!(
+        //     Term::Tuple(i.clone(), j.clone())
+        //         .match_strict(&Value::Tuple(iv.clone(), jv.clone()), &env),
+        //     MatchResult::Pass(vec![])
+        // );
+        // assert_eq!(
+        //     Term::Tuple(i, j).match_strict(&Value::Tuple(jv, iv), &env),
+        //     MatchResult::Fail
+        // );
     }
 
     #[test]
@@ -415,8 +476,8 @@ mod tests {
         let j = Node::new_raw(Term::Lit(Literal::Int(3)));
         let v = Node::new_raw(Term::Var(fresh_var()));
 
-        let iv = Box::new(Value::Lit(Literal::Int(2)));
-        let jv = Box::new(Value::Lit(Literal::Int(3)));
+        // let iv = Box::new(Value::Lit(Literal::Int(2)));
+        // let jv = Box::new(Value::Lit(Literal::Int(3)));
         let ir = Node::new_raw(Total::Lit(Literal::Int(2)));
         let jr = Node::new_raw(Total::Lit(Literal::Int(3)));
         let vr = Node::new_raw(Total::Any);
@@ -431,17 +492,17 @@ mod tests {
             .will_match(&Node::new_raw(Total::Tuple(jr.clone(), vr.clone())))
             .is_ok());
 
-        assert_eq!(
-            Term::Union(i.clone(), j.clone()).match_strict(&Value::Lit(Literal::Int(3)), &env),
-            MatchResult::Pass(vec![])
-        );
-        assert_eq!(
-            Term::Union(i.clone(), v.clone()).match_strict(&Value::Lit(Literal::Int(3)), &env),
-            MatchResult::Pass(vec![(fresh_var(), Value::Lit(Literal::Int(3)))])
-        );
-        assert_eq!(
-            Term::Union(i, j).match_strict(&Value::Tuple(jv, iv), &env),
-            MatchResult::Fail
-        );
+        // assert_eq!(
+        //     Term::Union(i.clone(), j.clone()).match_strict(&Value::Lit(Literal::Int(3)), &env),
+        //     MatchResult::Pass(vec![])
+        // );
+        // assert_eq!(
+        //     Term::Union(i.clone(), v.clone()).match_strict(&Value::Lit(Literal::Int(3)), &env),
+        //     MatchResult::Pass(vec![(fresh_var(), Value::Lit(Literal::Int(3)))])
+        // );
+        // assert_eq!(
+        //     Term::Union(i, j).match_strict(&Value::Tuple(jv, iv), &env),
+        //     MatchResult::Fail
+        // );
     }
 }

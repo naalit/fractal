@@ -1,5 +1,4 @@
 pub use crate::ast::{Literal, Node};
-pub use crate::vm::Value;
 pub use string_interner::Sym;
 
 use codespan::{FileId, Files};
