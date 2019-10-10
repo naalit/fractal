@@ -37,7 +37,7 @@ fn main() {
                     use pattern::HasTotal;
                     match i.total(&mut env, false) {
                         Ok(mut x) => {
-                            x.simplify_mut(&env);
+                            x.simplify_mut(&mut env);
                             println!(": {}", x);
                             println!("Checks out!");
                         },
@@ -93,7 +93,7 @@ fn main() {
                         use pattern::HasTotal;
                         match i.total(&mut env, false) {
                             Ok(mut x) => {
-                                x.simplify_mut(&env);
+                                x.simplify_mut(&mut env);
                                 println!(": {}", x);
                                 println!("Checks out!");
                             },

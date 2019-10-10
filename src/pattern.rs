@@ -6,6 +6,7 @@ pub type BTotal = Node<Total>;
 
 #[derive(Debug)]
 pub enum MatchError {
+    Custom(Node<String>),
     Pat(BTotal, BTotal),
     NotFun(BTotal),
     NotFound(Node<Sym>),
@@ -16,6 +17,9 @@ impl MatchError {
     pub fn error(self) -> Vec<crate::error::Error> {
         use crate::error::*;
         match self {
+            MatchError::Custom(s) => {
+                vec![Error::new(s.file, &*s, s.span, "")]
+            }
             MatchError::Pat(l, r) => {
                 let message = format!("Couldn't match '{}' with '{}'", r, l);
                 let message_r = format!("Matching this: '{}'", r);
@@ -85,8 +89,12 @@ impl TotalCompat for BTotal {
 /// So it can be used for general evaluation as well
 #[derive(Debug, PartialEq, Clone)]
 pub enum Total {
+    App(BTotal, BTotal),
     Fun(Vec<(BTotal, BTotal)>),
     Builtin(Builtin),
+    /// It could be either of these things
+    Or(BTotal, BTotal),
+    /// This is a written union, x|y. It's not used for 'either of these things' for totals
     Union(BTotal, BTotal),
     Inter(BTotal, BTotal),
     Lit(Literal),
@@ -97,22 +105,29 @@ pub enum Total {
     Var(Sym),
     /// A variable with a known pattern that can be refined
     Defined(Sym, BTotal),
+    /// It could be any number. If the user writes 'num', that's Builtin(Builtin::Num), which evaluates to this only on the pattern side
     Num,
+    /// Nothing inhabits this, and it matches nothing
+    Void,
     Any,
 }
 
 impl std::fmt::Display for BTotal {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &**self {
+            Total::Void => write!(f, "!"),
             Total::Any => write!(f, "_"),
             Total::Num => write!(f, "num"),
             Total::Defined(s, t) => write!(f, "{}: {}", INTERN.read().unwrap().resolve(*s).unwrap(), t),
             Total::Var(s) => write!(f, "{}", INTERN.read().unwrap().resolve(*s).unwrap()),
             Total::Rec(u) => write!(f, "<deprecated Rec {}>", u),
+            Total::App(a, b) => write!(f, "({})({})", a, b),
             Total::Tuple(a, b) => write!(f, "{}, {}", a, b),
             Total::Inter(a, b) => write!(f, "{} : {}", a, b),
             Total::Lit(l) => write!(f, "{}", l),
             Total::Union(a, b) => write!(f, "{} | {}", a, b),
+            // TODO: print this differently from unions
+            Total::Or(a, b) => write!(f, "{} | {}", a, b),
             Total::Fun(v) => {
                 write!(f, "fun")?;
                 for i in v {
@@ -142,20 +157,45 @@ pub fn merge<T>(mut a: Vec<T>, mut b: Vec<T>) -> Vec<T> {
 }
 
 impl BTotal {
+    /// 'Simple' terms are ones that we let you return from functions (and remove the App node)
+    fn simple(&self) -> bool {
+        match &**self {
+            Total::Lit(_) | Total::Builtin(_) => true,
+            Total::Tuple(a, b) => a.simple() && b.simple(),
+            _ => false,
+        }
+    }
+
+    /// What this matches
+    fn pat(&self) -> BTotal {
+        match &**self {
+            Total::Var(_) => self.replace(Total::Any),
+            Total::Tuple(a, b) => self.replace(Total::Tuple(a.pat(), b.pat())),
+            Total::Union(a, b) => self.replace(Total::Or(a.pat(), b.pat())),
+            Total::Inter(a, b) => self.replace(Total::Inter(a.pat(), b.pat())),
+            Total::App(_, _) | Total::Rec(_) | Total::Num | Total::Or(_, _) => self.replace(Total::Void),
+            Total::Defined(_, x) => x.pat(),
+            Total::Builtin(b) => self.replace(b.pat()),
+            // TODO
+            Total::Fun(_) => self.replace(Total::Any),
+            Total::Any | Total::Void | Total::Lit(_) => self.clone(),
+        }
+    }
+
     /// The totals that each variable is guaranteed to have if the pattern matches
     /// E.g. 'x:3' -> [(Sym(x), Total::Unit(Value::Int(3)))]
     pub fn guaranteed(&self) -> Vec<(Sym, BTotal)> {
         println!("Guaranteed for {:?}", self);
-        let Node { span, file, .. } = self;
         match &**self {
-            Total::Var(x) => vec![(*x, Node::new(*span, *file, Total::Any))],
+            Total::Var(x) => vec![(*x, self.replace(Total::Any))],
             Total::Tuple(a, b) => merge(a.guaranteed(), b.guaranteed()),
             Total::Inter(a, b) => {
                 // HACK
                 let mut bg = b.guaranteed();
                 match &**a {
                     Total::Var(s) => {
-                        bg.push((*s, b.clone()));
+                        println!("B is {}", b);
+                        bg.push((*s, b.pat()));
                         bg
                     }
                     _ => bg,
@@ -166,7 +206,7 @@ impl BTotal {
         }
     }
 
-    pub fn simplify_mut(&mut self, env: &Env<BTotal>) {
+    pub fn simplify_mut(&mut self, env: &mut Env<BTotal>) {
         if let Some(a) = self.simplify(env) {
             *self = a;
         };
@@ -175,6 +215,55 @@ impl BTotal {
     pub fn move_env_mut(&mut self) {
         if let Some(a) = self.move_env() {
             *self = a;
+        }
+    }
+
+    pub fn app(self, other: BTotal, env: &mut Env<BTotal>) -> Result<BTotal, MatchError> {
+        let a = match &*self {
+            Total::Builtin(b) => b.eval(&other).map(|x| self.replace(x))?,
+            // TODO check for multiple branches that together provide exhaustiveness
+            Total::Fun(f) => {
+                let v: Vec<_> = f.iter().map(|(p, b)| (p.will_match(&other), b)).collect();
+                if let Some((sub, body)) = v.iter().find(|(p, _)| p.is_ok()) {
+                    let mut body = (*body).clone();
+                    let sub = sub.as_ref().unwrap().clone();
+
+                    let mut rem = Vec::new();
+                    let mut old = Vec::new();
+
+                    for (k,v) in sub {
+                        rem.push(k);
+                        if let Some(v) = env.env.insert(k, v) {
+                            old.push((k,v));
+                        }
+                    }
+
+                    body.simplify_mut(env);
+                    body.move_env_mut();
+
+                    for k in rem {
+                        env.env.remove(&k);
+                    }
+                    for (k,v) in old {
+                        env.env.insert(k, v);
+                    }
+
+                    Ok(body)
+                } else {
+                    Err(MatchError::Multi(
+                        v.into_iter()
+                            .filter(|(p, _)| p.is_err())
+                            .map(|(p, _)| p.unwrap_err())
+                            .collect(),
+                    ))
+                }
+            }?,
+            _ => return Err(MatchError::NotFun(self)),
+        };
+        if a.simple() {
+            Ok(a)
+        } else {
+            Ok(Node::new(codespan::Span::new(self.span.start(), other.span.end()), self.file, Total::App(self, other)))
         }
     }
 
@@ -207,42 +296,44 @@ impl BTotal {
         n.map(|x| Node::new(span, file, x))
     }
 
-    pub fn simplify(&self, env: &Env<BTotal>) -> Option<BTotal> {
-        let multi =
+    pub fn simplify(&self, env: &mut Env<BTotal>) -> Option<BTotal> {
+        let mut multi =
             |cons: fn(BTotal, BTotal) -> Total, a: &BTotal, b: &BTotal| match a.simplify(env) {
                 Some(a) => match b.simplify(env) {
-                    Some(b) => Some(cons(a, b)),
-                    None => Some(cons(a, b.clone())),
+                    Some(b) => Some(self.replace(cons(a, b))),
+                    None => Some(self.replace(cons(a, b.clone()))),
                 },
                 None => match b.simplify(env) {
-                    Some(b) => Some(cons(a.clone(), b)),
+                    Some(b) => Some(self.replace(cons(a.clone(), b))),
                     None => None,
                 },
             };
 
-        let Node { span, file, .. } = self;
-        let (span, file) = (*span, *file);
-
-        let n = match &*self.val {
+        match &*self.val {
             Total::Defined(s, t) => match env.get(*s) {
                 Some(u) => {
-                    // assert!(t.will_match(u).is_ok());
-                    Some(Total::Defined(*s, u.clone()))
+                    assert!(t == u || t.will_match(u).is_ok(), "Total::Defined was narrowed to {}, which doesn't match the previous value of {}", u, t);
+                    Some(self.replace(Total::Defined(*s, u.clone())))
                 }
                 None => None,
             },
             Total::Inter(a, b) => multi(Total::Inter, a, b),
             Total::Tuple(a, b) => multi(Total::Tuple, a, b),
             Total::Union(a, b) => multi(Total::Union, a, b),
-            // TODO fun
+            Total::App(a, b) => {
+                let a = a.simplify(env).unwrap_or_else(|| a.clone());
+                let b = b.simplify(env).unwrap_or_else(|| b.clone());
+                let app = a.app(b, env).expect("Could not apply a and b in simplify()!");
+                Some(app)
+            }
+            // TODO Fun
             _ => None,
-        };
-
-        n.map(|x| Node::new(span, file, x))
+        }
     }
 
     pub fn will_match(&self, other: &BTotal) -> WillMatch {
         match (&**self, &**other) {
+            (Total::Builtin(Builtin::Num), _) => self.replace(Total::Num).will_match(other),
             (_, Total::Builtin(x)) => self.will_match(&other.replace(x.total())),
             (Total::Num, Total::Num) => Ok(vec![]),
             (Total::Num, Total::Lit(Literal::Int(_))) => Ok(vec![]),
@@ -301,47 +392,7 @@ impl HasTotal for BTerm {
                 if let Total::Defined(_, x) = &*f {
                     f = x.clone();
                 }
-                match &*f.val {
-                    // TODO check for multiple branches that together provide exhaustiveness
-                    Total::Builtin(b) => b.eval(&x),
-                    Total::Fun(f) => {
-                        let v: Vec<_> = f.iter().map(|(p, b)| (p.will_match(&x), b)).collect();
-                        if let Some((sub, body)) = v.iter().find(|(p, _)| p.is_ok()) {
-                            let mut body = (*body).clone();
-                            let sub = sub.as_ref().unwrap().clone();
-
-                            let mut rem = Vec::new();
-                            let mut old = Vec::new();
-
-                            for (k,v) in sub {
-                                rem.push(k);
-                                if let Some(v) = env.env.insert(k, v) {
-                                    old.push((k,v));
-                                }
-                            }
-
-                            body.simplify_mut(env);
-                            body.move_env_mut();
-
-                            for k in rem {
-                                env.env.remove(&k);
-                            }
-                            for (k,v) in old {
-                                env.env.insert(k, v);
-                            }
-
-                            Ok((*body.val).clone())
-                        } else {
-                            Err(MatchError::Multi(
-                                v.into_iter()
-                                    .filter(|(p, _)| p.is_err())
-                                    .map(|(p, _)| p.unwrap_err())
-                                    .collect(),
-                            ))
-                        }
-                    }
-                    _ => Err(MatchError::NotFun(f)),
-                }
+                f.app(x, env).map(|x| (*x).clone())
             }
             Term::Union(x, y) => {
                 let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
@@ -380,8 +431,13 @@ impl HasTotal for BTerm {
                 }
             }
             Term::Inter(x, y) => {
-                let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
-                Ok(Total::Inter(x, y))
+                if pat {
+                    let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
+                    Ok(Total::Inter(x, y))
+                } else {
+                    // We don't want the user to be able to create random intersections and pass them around
+                    Err(MatchError::Custom(self.replace(String::from("Intersections are only allowed on the pattern side"))))
+                }
             }
             Term::Def(lhs, rhs) => {
                 let (l, r) = and(lhs.total(env, true), rhs.total(env, pat))?;

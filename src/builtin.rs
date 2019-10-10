@@ -10,10 +10,12 @@ pub enum Builtin {
     Sub,
     Mul,
     Div,
+    Num,
 }
 impl Builtin {
     pub fn args(self) -> Total {
         match self {
+            Builtin::Num => Total::Void,
             Builtin::Sqr => Total::Num,
             Builtin::Sub | Builtin::Add | Builtin::Mul | Builtin::Div => {
                 Total::Tuple(Node::new_raw(Total::Num), Node::new_raw(Total::Num))
@@ -24,8 +26,17 @@ impl Builtin {
 
     pub fn ret(self) -> Total {
         match self {
+            Builtin::Num => Total::Void,
             Builtin::Print => Total::Lit(Literal::Nil),
             Builtin::Sub | Builtin::Add | Builtin::Mul | Builtin::Div | Builtin::Sqr => Total::Num,
+        }
+    }
+
+    pub fn pat(self) -> Total {
+        match self {
+            Builtin::Num => Total::Num,
+            // You can't match most builtins
+            _ => Total::Void,
         }
     }
 
@@ -38,6 +49,7 @@ impl Builtin {
                 Node::new_raw(Total::Num),
                 Node::new_raw(Total::Lit(Literal::Nil)),
             )]),
+            Builtin::Num => Total::Void,
         }
     }
 
@@ -90,6 +102,7 @@ pub fn builtins() -> Env<Builtin> {
         ("-", Builtin::Sub),
         ("*", Builtin::Mul),
         ("/", Builtin::Div),
+        ("num", Builtin::Num),
     ]
     .into_iter()
     .map(|(a, b)| (intern_w.get_or_intern(a), b))
@@ -104,10 +117,10 @@ pub fn totals() -> Env<BTotal> {
             .env
             .into_iter()
             .map(|(k, v)| (k, Node::new_raw(Total::Builtin(v))))
-            .chain(vec![(
-                INTERN.write().unwrap().get_or_intern("num"),
-                Node::new_raw(Total::Num),
-            )])
+            // .chain(vec![(
+            //     INTERN.write().unwrap().get_or_intern("num"),
+            //     Node::new_raw(Total::Num),
+            // )])
             .collect(),
     }
 }
