@@ -81,6 +81,10 @@ impl Builtin {
             (Builtin::Sqr, Total::Lit(Literal::Float(i))) => Ok(Total::Lit(Literal::Float(i * i))),
             (_, Total::Tuple(a, b)) => self.eval_tuple(a, b, x),
             (_, Total::Defined(_, t)) => self.eval(t),
+            (Builtin::Print, Total::Lit(i)) => {
+                println!("{}", i);
+                Ok(Total::Lit(Literal::Nil))
+            }
             _ => Err(MatchError::Pat(Node::new_raw(self.args()), x.clone())),
         } {
             Ok(x)

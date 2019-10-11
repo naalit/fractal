@@ -38,8 +38,10 @@ fn main() {
                     match i.total(&mut env, false) {
                         Ok(mut x) => {
                             x.simplify_mut(&mut env);
-                            println!(": {}", x);
-                            println!("Checks out!");
+                            if verbose {
+                                println!(": {}", x);
+                                println!("Checks out!");
+                            }
                         }
                         Err(e) => {
                             println!("Match error {:?}", e);

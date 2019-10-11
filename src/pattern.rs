@@ -197,7 +197,6 @@ impl BTotal {
     /// The totals that each variable is guaranteed to have if the pattern matches
     /// E.g. 'x:3' -> [(Sym(x), Total::Unit(Value::Int(3)))]
     pub fn guaranteed(&self) -> Vec<(Sym, BTotal)> {
-        println!("Guaranteed for {:?}", self);
         match &**self {
             Total::Var(x) => vec![(*x, self.replace(Total::Any))],
             Total::Tuple(a, b) => merge(a.guaranteed(), b.guaranteed()),
@@ -477,8 +476,10 @@ impl HasTotal for BTerm {
             }
             Term::Block(v) => {
                 let mut t = Node::new(*span, *file, Total::Lit(Literal::Nil));
+                // TODO this is slow, probably
+                let mut env2 = env.clone();
                 for i in v {
-                    t = i.total(env, pat)?;
+                    t = i.total(&mut env2, pat)?;
                 }
                 return Ok(t);
             }
