@@ -31,7 +31,7 @@ impl<T> Node<T> {
         Node {
             val: Rc::new(val),
             span: self.span,
-            file: self.file
+            file: self.file,
         }
     }
 }
@@ -41,7 +41,8 @@ impl std::fmt::Display for Node<Term> {
         match &**self {
             Term::Lit(l) => l.fmt(f),
             Term::Rec(s) => write!(f, "rec {}", INTERN.read().unwrap().resolve(*s).unwrap()),
-            Term::Var(s) => f.write_str(INTERN.read().unwrap().resolve(*s).unwrap()),
+            Term::Var(s) => write!(f, "var {}", INTERN.read().unwrap().resolve(*s).unwrap()),
+            Term::Ident(s) => f.write_str(INTERN.read().unwrap().resolve(*s).unwrap()),
             Term::Tuple(a, b) => write!(f, "{}, {}", a, b),
             Term::Union(a, b) => write!(f, "{} | {}", a, b),
             Term::Inter(a, b) => write!(f, "{} : {}", a, b),
@@ -120,7 +121,10 @@ impl std::fmt::Display for Literal {
 pub enum Term {
     Lit(Literal),
     Rec(Sym),
+    /// 'var x'
     Var(Sym),
+    /// 'x'
+    Ident(Sym),
     Tuple(BTerm, BTerm),
     Union(BTerm, BTerm),
     /// The Intersection of two patterns - represented with `:`

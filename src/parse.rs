@@ -36,7 +36,8 @@ impl Rule {
             Rule::samedent => "matching indentation",
             Rule::line => "expression",
             Rule::num => "number",
-            Rule::var | Rule::sym => "identifier",
+            Rule::var => "'var'",
+            Rule::ident | Rule::sym => "identifier",
             Rule::EOI => "end of input",
             Rule::close_paren => "')'",
             Rule::def => "'='",
@@ -102,7 +103,7 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
             Rule::def => Term::Def(lhs, rhs),
             // Rule::fun_sym => Term::Fun(Box::new(lhs), Box::new(rhs)),
             Rule::dot => {
-                if let Term::Var(s) = &*rhs.val {
+                if let Term::Ident(s) = &*rhs.val {
                     Term::Dot(lhs, *s)
                 } else {
                     return Err(Error::new(
@@ -114,7 +115,7 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
                 }
             }
             Rule::app => Term::App(lhs, rhs),
-            Rule::var | Rule::sym => {
+            Rule::ident | Rule::sym => {
                 let sym = INTERN.write().unwrap().get_or_intern(op.as_str().trim());
                 let span = lhs.span.merge(pest_span(op.as_span()));
                 Term::App(
@@ -154,7 +155,13 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
                 .unwrap()
                 .get_or_intern(p.as_str().trim()[3..].trim()),
         ),
-        Rule::var | Rule::sym => Term::Var(INTERN.write().unwrap().get_or_intern(p.as_str())),
+        Rule::var => Term::Var(
+            INTERN
+                .write()
+                .unwrap()
+                .get_or_intern(p.as_str().trim()[3..].trim()),
+        ),
+        Rule::ident | Rule::sym => Term::Ident(INTERN.write().unwrap().get_or_intern(p.as_str())),
         Rule::fun => {
             let arms = parse_fun(file, context, p.into_inner())?;
             Term::Fun(arms)
@@ -173,7 +180,7 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
             let ops = vec![
                 Operator::new(Rule::def, Assoc::Left),
                 Operator::new(Rule::union, Assoc::Right),
-                Operator::new(Rule::var, Assoc::Left),
+                Operator::new(Rule::ident, Assoc::Left),
                 Operator::new(Rule::sym, Assoc::Left),
                 Operator::new(Rule::app, Assoc::Left),
                 Operator::new(Rule::tuple, Assoc::Right),
@@ -265,7 +272,7 @@ mod tests {
             # Seven
             "#) => {
                 x => Term::Def(z,f),
-                z => Term::Var(_),
+                z => Term::Ident(_),
                 f => Term::Lit(Literal::Int(5))
             }
         }
@@ -277,14 +284,14 @@ mod tests {
             // This should be prec = fun (S (x: Nat)) => x
             clean_parse("prec = fun\n  S x : Nat => x") => {
                 x => Term::Def(prec, x),
-                prec => Term::Var(_),
+                prec => Term::Ident(_),
                 x => Term::Fun(f),
                 f[0].lhs => Term::App(s, xnat),
-                s => Term::Var(_),
+                s => Term::Ident(_),
                 xnat => Term::Inter(x, nat),
-                x => Term::Var(_),
-                nat => Term::Var(_),
-                f[0].rhs => Term::Var(_)
+                x => Term::Ident(_),
+                nat => Term::Ident(_),
+                f[0].rhs => Term::Ident(_)
             }
         }
     }
@@ -294,16 +301,16 @@ mod tests {
         assert_matches! {
             clean_parse("f do\n x = do\n  y = 2\n y = 3") => {
                 x => Term::App(f,b),
-                f => Term::Var(_),
+                f => Term::Ident(_),
                 b => Term::Block(v),
                 v[0] => Term::Def(x,b2),
-                x => Term::Var(_),
+                x => Term::Ident(_),
                 b2 => Term::Block(v2),
                 v2[0] => Term::Def(y,two),
-                y => Term::Var(_),
+                y => Term::Ident(_),
                 two => Term::Lit(Literal::Int(2)),
                 v[1] => Term::Def(y,three),
-                y => Term::Var(_),
+                y => Term::Ident(_),
                 three => Term::Lit(Literal::Int(3))
             }
         }
@@ -314,14 +321,14 @@ mod tests {
         assert_matches! {
             clean_parse("f = fun x y => y z") => {
                 x => Term::Def(f,fun),
-                f => Term::Var(_),
+                f => Term::Ident(_),
                 fun => Term::Fun(fs),
                 fs[0].lhs => Term::App(x,y),
                 fs[0].rhs => Term::App(y2,z),
-                x => Term::Var(_),
-                y => Term::Var(_),
-                y2 => Term::Var(_),
-                z => Term::Var(_)
+                x => Term::Ident(_),
+                y => Term::Ident(_),
+                y2 => Term::Ident(_),
+                z => Term::Ident(_)
             }
         }
     }
@@ -335,7 +342,7 @@ mod tests {
                 x => Term::Dot(two,_),
                 four => Term::Lit(Literal::Int(4)),
                 two => Term::Lit(Literal::Int(2)),
-                a => Term::Var(_)
+                a => Term::Ident(_)
             }
         }
     }
@@ -346,11 +353,11 @@ mod tests {
             clean_parse("f 2 + f 3") => {
                 x => Term::App(f2p, f3),
                 f3 => Term::App(f, three),
-                f => Term::Var(_),
+                f => Term::Ident(_),
                 three => Term::Lit(Literal::Int(3)),
                 f2p => Term::Dot(f2, _),
                 f2 => Term::App(f, two),
-                f => Term::Var(_),
+                f => Term::Ident(_),
                 two => Term::Lit(Literal::Int(2))
             }
         }
@@ -373,14 +380,14 @@ mod tests {
                 abcd => Term::Dot(abc,_),
                 abc => Term::App(ab,c),
                 ab => Term::Dot(a,_),
-                a => Term::Var(_),
-                c => Term::Var(_),
-                e => Term::Var(_),
+                a => Term::Ident(_),
+                c => Term::Ident(_),
+                e => Term::Ident(_),
 
                 hij => Term::App(hi,j),
                 hi => Term::Dot(h,_),
-                h => Term::Var(_),
-                j => Term::Var(_)
+                h => Term::Ident(_),
+                j => Term::Ident(_)
             }
         }
     }
@@ -390,10 +397,10 @@ mod tests {
         assert_matches! {
             clean_parse("f x, y") => {
                 p => Term::App(f, t),
-                f => Term::Var(_),
+                f => Term::Ident(_),
                 t => Term::Tuple(x, y),
-                x => Term::Var(_),
-                y => Term::Var(_)
+                x => Term::Ident(_),
+                y => Term::Ident(_)
             }
         };
     }

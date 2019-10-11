@@ -1,17 +1,18 @@
-keyword = @{ "fun" | "do" | "rec" }
+keyword = @{ "fun" | "do" | "rec" | "var" }
 num = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
-var = @{ !num ~ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'")+ }
+ident = @{ !num ~ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'")+ }
 sym = @{ (!(ASCII_ALPHANUMERIC | WHITESPACE | "(" | ")" | "\n" | "_"  | "." | "|" | "," | "=" | ":" | "$") ~ ANY)+ }
 nil = { "(" ~ ")" }
-rec = { "rec" ~ var }
-atom = _{ nil | rec | num | sym | var | paren }
+var = { "var" ~ ident }
+rec = { "rec" ~ ident }
+atom = _{ nil | var | rec | num | sym | ident | paren }
 
 tuple = { "," }
 union = { "|" }
 inter = { ":" }
 dot   = { "." }
 def   = { !("=>") ~ "=" }
-op = _{ tuple | union | inter | dot | sym | var }
+op = _{ tuple | union | inter | dot | sym | ident }
 
 app = { "" }
 close_paren = { ")" }

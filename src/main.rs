@@ -40,7 +40,7 @@ fn main() {
                             x.simplify_mut(&mut env);
                             println!(": {}", x);
                             println!("Checks out!");
-                        },
+                        }
                         Err(e) => {
                             println!("Match error {:?}", e);
                             for i in e.error() {
@@ -96,7 +96,7 @@ fn main() {
                                 x.simplify_mut(&mut env);
                                 println!(": {}", x);
                                 println!("Checks out!");
-                            },
+                            }
                             Err(e) => {
                                 println!("Match error {:?}", e);
                                 for i in e.error() {
