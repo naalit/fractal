@@ -1,3 +1,19 @@
+//! Indentation still doesn't quite work the way I want it to, so I'll probably switch to a handwritten parser eventually
+//! For example, try:
+//! ```
+//! do
+//!        var x = 3
+//!    var y = 4
+//! ```
+//! It should give an error, but it doesn't. Or try
+//! ```
+//! 3
+//!   + 2
+//!   .sqr
+//! ```
+//! Which resolves to `3 + (2.sqr)` instead of `(3 + 2).sqr`
+//! So it returns `7` instead of `25`
+
 use crate::ast::*;
 use crate::common::*;
 use crate::error::*;

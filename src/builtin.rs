@@ -17,9 +17,10 @@ impl Builtin {
         match self {
             Builtin::Num => Total::Void,
             Builtin::Sqr => Total::Num,
-            Builtin::Sub | Builtin::Add | Builtin::Mul | Builtin::Div => {
-                Total::Tuple(Node::new_raw(Total::Num), Node::new_raw(Total::Num))
-            }
+            Builtin::Sub | Builtin::Add | Builtin::Mul | Builtin::Div => Total::Tuple(
+                Node::new_raw(Total::Builtin(Builtin::Num)),
+                Node::new_raw(Total::Builtin(Builtin::Num)),
+            ),
             Builtin::Print => Total::Num,
         }
     }
@@ -90,7 +91,7 @@ impl Builtin {
             Ok(x)
         } else {
             match Node::new_raw(self.args()).will_match(x) {
-                Ok(_) => Ok(self.ret()),
+                Ok(_) => Ok(Total::App(Node::new_raw(Total::Builtin(self)), x.clone(), Node::new_raw(self.ret()))),
                 Err(e) => Err(e),
             }
         }

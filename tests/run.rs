@@ -68,6 +68,18 @@ fn test_do() {
 }
 
 #[test]
+fn test_dot() {
+    let r = run("2 + 3");
+    assert_match!(@ok r, Total::Lit(Literal::Int(5)));
+    let r = run(r#"do
+    var f = fun var x:num, var y:num => y - x
+    var minus_two = 2.f
+    minus_two 3
+"#);
+    assert_match!(@ok r, Total::Lit(Literal::Int(1)));
+}
+
+#[test]
 fn test_union() {
     let r = run(r#"do
     var f = fun 2 | 3 => ()

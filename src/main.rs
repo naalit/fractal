@@ -38,9 +38,9 @@ fn main() {
                     match i.total(&mut env, false) {
                         Ok(mut x) => {
                             x.simplify_mut(&mut env);
+                            // We only print the result of a script with -v
                             if verbose {
-                                println!(": {}", x);
-                                println!("Checks out!");
+                                println!("=> {}", x);
                             }
                         }
                         Err(e) => {
@@ -96,8 +96,7 @@ fn main() {
                         match i.total(&mut env, false) {
                             Ok(mut x) => {
                                 x.simplify_mut(&mut env);
-                                println!(": {}", x);
-                                println!("Checks out!");
+                                println!("=> {}", x);
                             }
                             Err(e) => {
                                 println!("Match error {:?}", e);

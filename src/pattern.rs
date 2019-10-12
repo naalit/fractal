@@ -68,20 +68,6 @@ pub trait HasTotal {
     fn total(&self, e: &mut Env<BTotal>, pat: bool) -> Result<BTotal, MatchError>;
 }
 
-pub trait TotalCompat: Sized {
-    fn to_total(&self) -> Option<BTotal>;
-    fn from_total(t: &BTotal) -> Option<Self>;
-}
-
-impl TotalCompat for BTotal {
-    fn to_total(&self) -> Option<BTotal> {
-        Some(self.clone())
-    }
-    fn from_total(t: &BTotal) -> Option<BTotal> {
-        t.to_total()
-    }
-}
-
 /// The set of possible patterns that a value can take
 /// This is the IR that we use for partial evaluation and validation
 /// So it can be used for general evaluation as well
@@ -152,6 +138,14 @@ pub fn both(a: WillMatch, b: WillMatch) -> WillMatch {
     }
 }
 
+pub fn either(a: WillMatch, b: WillMatch) -> WillMatch {
+    match (a, b) {
+        (Ok(x), _) => Ok(x),
+        (_, Ok(x)) => Ok(x),
+        (Err(e), Err(e2)) => Err(MatchError::Multi(vec![e, e2])),
+    }
+}
+
 pub fn merge<T>(mut a: Vec<T>, mut b: Vec<T>) -> Vec<T> {
     a.append(&mut b);
     a
@@ -167,16 +161,52 @@ impl BTotal {
         }
     }
 
-    // /// What this could be
-    // fn tot(&self) -> BTotal {
-    //     match &**self {
-    //         Total::Defined(_, x) => x.tot(),
-    //         Total::App(a, b) =>
-    //         _ => self.clone(),
-    //     }
-    // }
+    fn args(&self) -> BTotal {
+        match &**self {
+            // A union of all the possible arguments
+            Total::Fun(v) => {
+                let u = v.iter().fold(self.replace(Total::Void), |acc, x| {
+                    self.replace(Total::Union(x.0.clone(), acc))
+                });
+                // Take the Void out and simplify a little
+                match &*u {
+                    Total::Union(x, y) => match &**y {
+                        Total::Void => match &**x {
+                            // This stuff is important for `.` notation
+                            // Replace (a1,a2)|(b1,b2) with (a1|b1, a2|b2)
+                            Total::Union(a, b) => match (&**a, &**b) {
+                                (Total::Tuple(a1, a2), Total::Tuple(b1, b2)) => {
+                                    x.replace(Total::Tuple(
+                                        a.replace(Total::Union(a1.clone(), b1.clone())),
+                                        b.replace(Total::Union(a2.clone(), b2.clone())),
+                                    ))
+                                }
+                                _ => x.clone(),
+                            },
+                            // Replace (a1,a2):(b1,b2) with (a1:b1, a2:b2)
+                            Total::Inter(a, b) => match (&**a, &**b) {
+                                (Total::Tuple(a1, a2), Total::Tuple(b1, b2)) => {
+                                    x.replace(Total::Tuple(
+                                        a.replace(Total::Inter(a1.clone(), b1.clone())),
+                                        b.replace(Total::Inter(a2.clone(), b2.clone())),
+                                    ))
+                                }
+                                _ => x.clone(),
+                            },
+                            _ => x.clone(),
+                        },
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                }
+            }
+            Total::Builtin(b) => self.replace(b.args()),
+            // Not callable
+            _ => self.replace(Total::Void),
+        }
+    }
 
-    /// What this matches
+    /// If this is on the pattern side, what could it possibly match?
     fn pat(&self) -> BTotal {
         match &**self {
             Total::Var(_) => self.replace(Total::Any),
@@ -195,7 +225,7 @@ impl BTotal {
     }
 
     /// The totals that each variable is guaranteed to have if the pattern matches
-    /// E.g. 'x:3' -> [(Sym(x), Total::Unit(Value::Int(3)))]
+    /// E.g. `var x:3` -> `[(Sym(x), Total::Lit(Literal::Int(3)))]`
     pub fn guaranteed(&self) -> Vec<(Sym, BTotal)> {
         match &**self {
             Total::Var(x) => vec![(*x, self.replace(Total::Any))],
@@ -205,7 +235,6 @@ impl BTotal {
                 let mut bg = b.guaranteed();
                 match &**a {
                     Total::Var(s) => {
-                        println!("B is {}", b);
                         bg.push((*s, b.pat()));
                         bg
                     }
@@ -273,12 +302,14 @@ impl BTotal {
         };
         if a.simple() {
             Ok(a)
-        } else {
+        } else if self.span.end() - other.span.start() < codespan::ByteOffset(3) {
             Ok(Node::new(
                 codespan::Span::new(self.span.start(), other.span.end()),
                 self.file,
                 Total::App(self, other, a),
             ))
+        } else {
+            Ok(other.replace(Total::App(self, other.clone(), a)))
         }
     }
 
@@ -349,6 +380,8 @@ impl BTotal {
 
     pub fn will_match(&self, other: &BTotal) -> WillMatch {
         match (&**self, &**other) {
+            (_, Total::Inter(a, b)) => either(self.will_match(a), self.will_match(b)),
+            (_, Total::Or(a, b)) => both(self.will_match(a), self.will_match(b)),
             (Total::Defined(_, t), _) => t.will_match(other),
             (_, Total::Defined(_, t)) => self.will_match(t),
             (_, Total::App(_, _, r)) => self.will_match(r),
@@ -386,10 +419,16 @@ impl HasTotal for BTerm {
         let Node { span, file, .. } = self;
         let t = match &**self {
             Term::Lit(l) => Ok(Total::Lit(*l)),
-            Term::Dot(n, s) => Err(MatchError::MemberNotFound(
+            Term::Dot(n, s) => resolve_dot(
                 n.total(env, pat)?,
-                Node::new(codespan::Span::new(n.span.end(), span.end()), *file, *s),
-            )),
+                Node::new(
+                    codespan::Span::new(n.span.end(), self.span.end()),
+                    self.file,
+                    *s,
+                ),
+                env,
+            )
+            .map(|x| (*x).clone()),
             Term::Tuple(x, y) => {
                 let (x, y) = and(x.total(env, pat), y.total(env, pat))?;
                 Ok(Total::Tuple(x, y))
@@ -405,8 +444,9 @@ impl HasTotal for BTerm {
                 if pat {
                     Ok(Total::Var(*s))
                 } else {
-                    // TODO better error
-                    Err(MatchError::NotFound(Node::new(*span, *file, *s)))
+                    Err(MatchError::Custom(self.replace(String::from(
+                        "`var` is only allowed on the pattern side",
+                    ))))
                 }
             }
             Term::App(f, x) => {
@@ -487,5 +527,38 @@ impl HasTotal for BTerm {
             Term::Rec(_) => Ok(Total::Any),
         }?;
         Ok(Node::new(*span, *file, t))
+    }
+}
+
+/// To resolve `x.s`, we do, in order:
+/// - Is `x` a record with member `s`? If so, return the member `s` of `x`.
+/// - Is `x` a tag, and there's something named `s` in the module hierarchy where it was defined? If so, pass it `x`.
+/// - Is there something named `s` in the current module hierarchy? If so, pass it `x`.
+/// If we try to pass `x` to something that doesn't accept it but does accept `(x, _)`, we curry it.
+/// Currently, this function only implements the last one. (We don't even have records or tags yet!)
+fn resolve_dot(x: BTotal, s: Node<Sym>, env: &mut Env<BTotal>) -> Result<BTotal, MatchError> {
+    match env.get(*s) {
+        Some(y) => {
+            let y = y.clone();
+            match y.clone().app(x.clone(), env) {
+                Ok(z) => Ok(z),
+                Err(e) => match &*y.args() {
+                    Total::Tuple(a, b) if a.will_match(&x).is_ok() => {
+                        Ok(x.replace(Total::Fun(vec![(
+                            x.replace(Total::Inter(x.replace(Total::Var(*s)), b.clone())),
+                            y.clone().app(
+                                x.replace(Total::Tuple(
+                                    x.clone(),
+                                    x.replace(Total::Defined(*s, b.pat())),
+                                )),
+                                env,
+                            )?,
+                        )])))
+                    }
+                    _ => Err(e),
+                },
+            }
+        }
+        None => Err(MatchError::MemberNotFound(x, s)),
     }
 }
