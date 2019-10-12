@@ -55,6 +55,19 @@ fn main() {
             Err(e) => context.write_error(e).unwrap(),
         }
     } else {
+        // I copied this from clap: https://kbknapp.github.io/clap-rs/src/clap/macros.rs.html#632-640
+        macro_rules! crate_version {
+            () => {
+                format!(
+                    "{}.{}.{}{}",
+                    env!("CARGO_PKG_VERSION_MAJOR"),
+                    env!("CARGO_PKG_VERSION_MINOR"),
+                    env!("CARGO_PKG_VERSION_PATCH"),
+                    option_env!("CARGO_PKG_VERSION_PRE").unwrap_or("")
+                )
+            };
+        };
+        println!("Fractal {}", crate_version!());
         // TODO switch to rustyline
         loop {
             if buf.is_empty() {
@@ -63,7 +76,7 @@ fn main() {
             }
             let mut s = String::new();
             if std::io::stdin().read_line(&mut s).unwrap() == 0 || s.trim() == "exit" {
-                println!("Goodbye!");
+                println!("\nGoodbye!");
                 break;
             }
 

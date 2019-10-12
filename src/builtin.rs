@@ -91,7 +91,11 @@ impl Builtin {
             Ok(x)
         } else {
             match Node::new_raw(self.args()).will_match(x) {
-                Ok(_) => Ok(Total::App(Node::new_raw(Total::Builtin(self)), x.clone(), Node::new_raw(self.ret()))),
+                Ok(_) => Ok(Total::App(
+                    Node::new_raw(Total::Builtin(self)),
+                    x.clone(),
+                    Node::new_raw(self.ret()),
+                )),
                 Err(e) => Err(e),
             }
         }

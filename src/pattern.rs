@@ -515,6 +515,13 @@ impl HasTotal for BTerm {
                 }
             }
             Term::Block(v) => {
+                // TODO make blocks work in functions - test:
+                // ```
+                // var f = fun var x:num => do
+                //   var y = x
+                //   y
+                // f 3 # Should print 3
+                // ```
                 let mut t = Node::new(*span, *file, Total::Lit(Literal::Nil));
                 // TODO this is slow, probably
                 let mut env2 = env.clone();

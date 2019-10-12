@@ -25,12 +25,12 @@ fn test_inter() {
 #[test]
 fn test_app() {
     let r = run(r#"do
-    var f = fun var x:num => + x, x
+    var f = fun var x:num => x + x
     f 2
 "#);
     assert_match!(@ok r, Total::Lit(Literal::Int(4)));
     let r = run(r#"do
-    var f = fun var x:num => + x, x
+    var f = fun var x:num => x + x
     fun var g:num => f g
 "#);
     if let Ok(x) = &r {
@@ -48,7 +48,7 @@ fn test_app() {
 /// Makes sure that functions that can't be fully applied immediately propagate their return types correctly
 fn test_ret() {
     let r = run(r#"do
-    var f = fun var x:num => + x, x
+    var f = fun var x:num => x + x
     var g = fun var y:num => f (f y)
     g 3
 "#);
@@ -61,8 +61,8 @@ fn test_do() {
     var x = 3
     var y = do
         var x = 4
-        + x, 2 # 6
-    + x, y # 9
+        x + 2 # 6
+    x + y # 9
 "#);
     assert_match!(@ok r, Total::Lit(Literal::Int(9)));
 }

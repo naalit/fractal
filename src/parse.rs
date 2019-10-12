@@ -1,12 +1,12 @@
 //! Indentation still doesn't quite work the way I want it to, so I'll probably switch to a handwritten parser eventually
 //! For example, try:
-//! ```
+//! ```notest
 //! do
 //!        var x = 3
 //!    var y = 4
 //! ```
 //! It should give an error, but it doesn't. Or try
-//! ```
+//! ```notest
 //! 3
 //!   + 2
 //!   .sqr
