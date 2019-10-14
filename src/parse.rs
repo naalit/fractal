@@ -71,30 +71,26 @@ fn pest_span(span: pest::Span) -> Span {
     Span::new(span.start() as u32, span.end() as u32)
 }
 
-pub fn parse_str(
-    context: &mut ErrorContext,
-    file: impl Into<String>,
-    source: impl Into<String>,
-) -> Result<Vec<BTerm>> {
+pub fn parse_str(file: impl Into<String>, source: impl Into<String>) -> Result<Vec<BTerm>> {
     let source: String = source.into();
     let p = FractalPest::parse(Rule::prog, &source);
-    let file = context.add_file(file, &source);
+    let file = FILES.write().unwrap().add(file, &source);
     match p {
-        Ok(p) => pest_to_ast(file, context, p),
+        Ok(p) => pest_to_ast(file, p),
         Err(e) => Err(Error::from_pest(e, file)),
     }
 }
 
-fn parse_fun(file: FileId, context: &ErrorContext, tree: Pairs<Rule>) -> Result<Vec<Fun>> {
+fn parse_fun(file: FileId, tree: Pairs<Rule>) -> Result<Vec<Fun>> {
     let mut v = Vec::new();
     for i in tree.filter(filter_silent) {
         let f = match i.as_rule() {
             Rule::fun_arm => {
                 let mut i = i.into_inner();
                 let pat = i.next().unwrap();
-                let pat = parse_line(file, context, pat)?;
+                let pat = parse_line(file, pat)?;
                 let body = i.next().unwrap();
-                let body = parse_line(file, context, body)?;
+                let body = parse_line(file, body)?;
                 Fun {
                     lhs: pat,
                     rhs: body,
@@ -107,7 +103,7 @@ fn parse_fun(file: FileId, context: &ErrorContext, tree: Pairs<Rule>) -> Result<
     Ok(v)
 }
 
-fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTerm> {
+fn parse_line(file: FileId, p: Pair<Rule>) -> Result<BTerm> {
     let infix = |lhs: Result<BTerm>, op: Pair<Rule>, rhs: Result<BTerm>| -> Result<BTerm> {
         let lhs = lhs?;
         let rhs = rhs?;
@@ -179,13 +175,13 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
         ),
         Rule::ident | Rule::sym => Term::Ident(INTERN.write().unwrap().get_or_intern(p.as_str())),
         Rule::fun => {
-            let arms = parse_fun(file, context, p.into_inner())?;
+            let arms = parse_fun(file, p.into_inner())?;
             Term::Fun(arms)
         }
         Rule::block => Term::Block(
             p.into_inner()
                 .filter(filter_silent)
-                .map(|x| parse_line(file, context, x))
+                .map(|x| parse_line(file, x))
                 .try_fold(Vec::new(), |mut acc, x| {
                     acc.push(x?);
                     Ok(acc)
@@ -210,7 +206,7 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
                 climber
                     .climb(
                         p.into_inner().filter(filter_silent),
-                        |x| parse_line(file, context, x),
+                        |x| parse_line(file, x),
                         infix,
                     )?
                     .val,
@@ -226,10 +222,10 @@ fn parse_line(file: FileId, context: &ErrorContext, p: Pair<Rule>) -> Result<BTe
     })
 }
 
-pub fn pest_to_ast(file: FileId, context: &ErrorContext, tree: Pairs<Rule>) -> Result<Vec<BTerm>> {
+pub fn pest_to_ast(file: FileId, tree: Pairs<Rule>) -> Result<Vec<BTerm>> {
     let mut v = Vec::new();
     for i in tree.filter(filter_silent) {
-        let x = parse_line(file, context, i)?;
+        let x = parse_line(file, i)?;
         v.push(x);
     }
     Ok(v)
@@ -240,11 +236,10 @@ mod tests {
     use super::*;
 
     fn clean_parse(s: &str) -> Result<Vec<BTerm>> {
-        let mut context = ErrorContext::new();
-        let p = parse_str(&mut context, "test", s);
+        let p = parse_str("test", s);
         match &p {
             Ok(_) => (),
-            Err(e) => context.write_error(e.clone()).unwrap(),
+            Err(e) => e.write().unwrap(),
         };
         p
     }

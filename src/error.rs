@@ -2,9 +2,10 @@ use crate::common::*;
 use crate::parse::Rule;
 use codespan::{FileId, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::term::{emit, Config};
+use codespan_reporting::term::emit;
 use pest::error::InputLocation;
-use std::cell::RefCell;
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone)]
 pub struct Error(Diagnostic);
@@ -78,33 +79,13 @@ impl Error {
             }
         }
     }
-}
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-pub struct ErrorContext {
-    // files: Files,
-    writer: RefCell<termcolor::StandardStream>,
-    config: Config,
-}
-impl ErrorContext {
-    pub fn new() -> Self {
-        ErrorContext {
-            writer: RefCell::new(termcolor::StandardStream::stderr(
-                termcolor::ColorChoice::Always,
-            )),
-            config: Config::default(),
-        }
-    }
-    pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
-        FILES.write().unwrap().add(name, source)
-    }
-    pub fn write_error(&self, error: Error) -> std::io::Result<()> {
+    pub fn write(&self) -> std::io::Result<()> {
         emit(
-            &mut *self.writer.borrow_mut(),
-            &self.config,
+            &mut *WRITER.write().unwrap(),
+            &CONFIG,
             &FILES.read().unwrap(),
-            &error.0,
+            &self.0,
         )
     }
 }

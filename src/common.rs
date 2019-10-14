@@ -1,4 +1,6 @@
-pub use crate::ast::{Literal, Node};
+pub use crate::ast::BTerm;
+pub use crate::ast::{Env, Literal, Node};
+pub use crate::pattern::BTotal;
 pub use string_interner::Sym;
 
 use codespan::{FileId, Files};
@@ -15,4 +17,7 @@ lazy_static! {
     pub static ref NO_FILE: FileId = FILES.write().unwrap().add("<builtin>", "");
 
     pub static ref INTERN: RwLock<StringInterner<Sym>> = RwLock::new(StringInterner::new());
+
+    pub static ref CONFIG: codespan_reporting::term::Config = Default::default();
+    pub static ref WRITER: RwLock<termcolor::StandardStream> = RwLock::new(termcolor::StandardStream::stderr(termcolor::ColorChoice::Always));
 }

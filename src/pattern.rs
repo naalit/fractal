@@ -85,6 +85,7 @@ pub enum Total {
     Lit(Literal),
     Tuple(BTotal, BTotal),
     /// Recursive definitions use essentially nominal typing, where each definition is a unique type
+    /// They're not implemented yet, though, so really who knows how they'll end up working
     Rec(usize),
     /// Var() means that this wasn't bound when we created the Total, so it's on the pattern side and needs to be bound or it's invalid
     Var(Sym),
@@ -146,6 +147,7 @@ pub fn either(a: WillMatch, b: WillMatch) -> WillMatch {
     }
 }
 
+/// A helper function to concatenate two `Vec`s
 pub fn merge<T>(mut a: Vec<T>, mut b: Vec<T>) -> Vec<T> {
     a.append(&mut b);
     a
@@ -157,6 +159,7 @@ impl BTotal {
         match &**self {
             Total::Lit(_) | Total::Builtin(_) => true,
             Total::Tuple(a, b) => a.simple() && b.simple(),
+            Total::Defined(_, a) => a.simple(),
             _ => false,
         }
     }
@@ -165,44 +168,51 @@ impl BTotal {
         match &**self {
             // A union of all the possible arguments
             Total::Fun(v) => {
-                let u = v.iter().fold(self.replace(Total::Void), |acc, x| {
-                    self.replace(Total::Union(x.0.clone(), acc))
-                });
-                // Take the Void out and simplify a little
-                match &*u {
-                    Total::Union(x, y) => match &**y {
-                        Total::Void => match &**x {
-                            // This stuff is important for `.` notation
-                            // Replace (a1,a2)|(b1,b2) with (a1|b1, a2|b2)
-                            Total::Union(a, b) => match (&**a, &**b) {
-                                (Total::Tuple(a1, a2), Total::Tuple(b1, b2)) => {
-                                    x.replace(Total::Tuple(
-                                        a.replace(Total::Union(a1.clone(), b1.clone())),
-                                        b.replace(Total::Union(a2.clone(), b2.clone())),
-                                    ))
-                                }
-                                _ => x.clone(),
-                            },
-                            // Replace (a1,a2):(b1,b2) with (a1:b1, a2:b2)
-                            Total::Inter(a, b) => match (&**a, &**b) {
-                                (Total::Tuple(a1, a2), Total::Tuple(b1, b2)) => {
-                                    x.replace(Total::Tuple(
-                                        a.replace(Total::Inter(a1.clone(), b1.clone())),
-                                        b.replace(Total::Inter(a2.clone(), b2.clone())),
-                                    ))
-                                }
-                                _ => x.clone(),
-                            },
-                            _ => x.clone(),
-                        },
-                        _ => unreachable!(),
-                    },
-                    _ => unreachable!(),
+                let mut u = Node::new_raw(Total::Void);
+                for (pat, _) in v {
+                    if let Total::Void = &*u {
+                        u = pat.clone();
+                    } else {
+                        u = self.replace(Total::Union(pat.clone(), u));
+                    }
                 }
+                u
             }
             Total::Builtin(b) => self.replace(b.args()),
             // Not callable
             _ => self.replace(Total::Void),
+        }
+    }
+
+    /// If we match `(x, something)` return `something`, otherwise Err
+    fn match_tuple(&self, x: &BTotal) -> Result<BTotal, MatchError> {
+        match &**self {
+            Total::Tuple(a, b) => match a.will_match(x) {
+                Ok(_) => Ok(b.clone()),
+                Err(e) => Err(e),
+            },
+            // Either works
+            Total::Union(a, b) => match a.match_tuple(x) {
+                Ok(a) => match b.match_tuple(x) {
+                    Ok(b) => Ok(self.replace(Total::Union(a, b))),
+                    Err(_) => Ok(a.clone()),
+                },
+                Err(e) => match b.match_tuple(x) {
+                    Ok(b) => Ok(b.clone()),
+                    Err(e2) => Err(MatchError::Multi(vec![e, e2])),
+                },
+            },
+            Total::Inter(a, b) => match a.match_tuple(x) {
+                Ok(a) => match b.match_tuple(x) {
+                    Ok(b) => Ok(self.replace(Total::Inter(a, b))),
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            },
+            Total::Any => Ok(self.clone()),
+            Total::Var(_) => Ok(self.replace(Total::Any)),
+            Total::Defined(_, a) | Total::App(_, _, a) => a.match_tuple(x),
+            _ => Err(MatchError::Pat(self.clone(), x.clone())),
         }
     }
 
@@ -300,7 +310,7 @@ impl BTotal {
             }?,
             _ => return Err(MatchError::NotFun(self)),
         };
-        if a.simple() {
+        if other.simple() && a.simple() {
             Ok(a)
         } else if self.span.end() - other.span.start() < codespan::ByteOffset(3) {
             Ok(Node::new(
@@ -357,7 +367,9 @@ impl BTotal {
         match &*self.val {
             Total::Defined(s, t) => match env.get(*s) {
                 Some(u) => {
-                    assert!(t == u || t.will_match(u).is_ok(), "Total::Defined was narrowed to {}, which doesn't match the previous value of {}", u, t);
+                    if !(t == u || t.will_match(u).is_ok()) {
+                        println!("Warning: Total::Defined was narrowed to {}, which doesn't match the previous value of {}", u, t);
+                    }
                     Some(self.replace(Total::Defined(*s, u.clone())))
                 }
                 None => None,
@@ -401,7 +413,10 @@ impl BTotal {
             }
             (Total::Tuple(a, b), Total::Tuple(a2, b2)) => both(a.will_match(a2), b.will_match(b2)),
             (Total::Inter(a, b), _) => both(a.will_match(other), b.will_match(other)),
-            (Total::Union(a, b), _) => match a.will_match(other) {
+            // `Total::Or` shouldn't get here normally - `.pat()` would replace it with `Total::Void`
+            // It's treated as a union, though, because we have a sanity check on `Total::Defined` narrowing
+            //  that makes sure the new value matches the old one, and that requires this
+            (Total::Union(a, b), _) | (Total::Or(a, b), _) => match a.will_match(other) {
                 // Unions don't bind variables
                 Ok(_) => Ok(vec![]),
                 Err(e) => match b.will_match(other) {
@@ -545,24 +560,22 @@ impl HasTotal for BTerm {
 /// Currently, this function only implements the last one. (We don't even have records or tags yet!)
 fn resolve_dot(x: BTotal, s: Node<Sym>, env: &mut Env<BTotal>) -> Result<BTotal, MatchError> {
     match env.get(*s) {
-        Some(y) => {
-            let y = y.clone();
-            match y.clone().app(x.clone(), env) {
-                Ok(z) => Ok(z),
-                Err(e) => match &*y.args() {
-                    Total::Tuple(a, b) if a.will_match(&x).is_ok() => {
-                        Ok(x.replace(Total::Fun(vec![(
-                            x.replace(Total::Inter(x.replace(Total::Var(*s)), b.clone())),
-                            y.clone().app(
-                                x.replace(Total::Tuple(
-                                    x.clone(),
-                                    x.replace(Total::Defined(*s, b.pat())),
-                                )),
-                                env,
-                            )?,
-                        )])))
-                    }
-                    _ => Err(e),
+        Some(f) => {
+            let f = f.clone();
+            match f.clone().app(x.clone(), env) {
+                Ok(a) => Ok(a),
+                Err(_) => match f.args().match_tuple(&x) {
+                    Ok(rest) => Ok(x.replace(Total::Fun(vec![(
+                        x.replace(Total::Inter(x.replace(Total::Var(*s)), rest.clone())),
+                        f.clone().app(
+                            x.replace(Total::Tuple(
+                                x.clone(),
+                                x.replace(Total::Defined(*s, rest.pat())),
+                            )),
+                            env,
+                        )?,
+                    )]))),
+                    Err(e) => Err(e),
                 },
             }
         }

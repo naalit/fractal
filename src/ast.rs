@@ -92,9 +92,6 @@ impl<T> Env<T> {
     pub fn get(&self, s: Sym) -> Option<&T> {
         self.env.get(&s)
     }
-    pub fn insert(&mut self, s: Sym, v: T) {
-        self.env.insert(s, v);
-    }
 }
 
 pub type BTerm = Node<Term>;

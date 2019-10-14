@@ -77,6 +77,17 @@ fn test_dot() {
     minus_two 3
 "#);
     assert_match!(@ok r, Total::Lit(Literal::Int(1)));
+    let r = run(r#"do
+    var f = fun
+        3, 3 => 1
+        4, 5 => 2
+        9, 10 => 9000
+        num, num => 180
+    (3 f 3) + # 1
+        (4.f 5) + # 2
+            (2 f 3) # 180
+"#);
+    assert_match!(@ok r, Total::Lit(Literal::Int(183)));
 }
 
 #[test]

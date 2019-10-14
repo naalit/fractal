@@ -9,7 +9,7 @@ mod pattern;
 
 use crate::pattern::HasTotal;
 pub use ast::Literal;
-use common::*;
+pub use common::*;
 pub use pattern::{BTotal, Total};
 
 #[derive(Debug)]
@@ -19,8 +19,7 @@ pub enum RunError {
 }
 
 pub fn run(src: impl Into<String>) -> Result<BTotal, RunError> {
-    let mut e = error::ErrorContext::new();
-    let p = parse::parse_str(&mut e, "<test>", src).map_err(RunError::ParseError)?;
+    let p = parse::parse_str("<test>", src).map_err(RunError::ParseError)?;
     if p.len() != 1 {
         panic!("Wrong number of terms parsed, expected 1, got {}", p.len());
     }
